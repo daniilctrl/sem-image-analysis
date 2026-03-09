@@ -18,9 +18,13 @@ EMBEDDING_CONFIGS = {
         "emb_file": EMBEDDINGS_DIR / "resnet50_embeddings.npy",
         "names_file": EMBEDDINGS_DIR / "embedding_names.csv",
     },
-    "SimCLR (Fine-tuned on SEM)": {
-        "emb_file": EMBEDDINGS_DIR / "simclr_embeddings.npy",
-        "names_file": EMBEDDINGS_DIR / "simclr_embedding_names.csv",
+    "SimCLR v1 (batch=64, temp=0.5)": {
+        "emb_file": EMBEDDINGS_DIR / "finetuned_embeddings.npy",
+        "names_file": EMBEDDINGS_DIR / "embedding_names.csv",
+    },
+    "SimCLR v2 (batch=80, temp=0.2)": {
+        "emb_file": EMBEDDINGS_DIR / "finetuned_embeddings_v2.npy",
+        "names_file": EMBEDDINGS_DIR / "embedding_names.csv",
     }
 }
 
