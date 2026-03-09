@@ -61,6 +61,11 @@ def process_images(input_dir, output_dir, tile_size=256, stride=256):
                 print(f"Failed to read image {tiff_file}")
                 continue
                 
+            # Отрезаем нижнюю информационную панель микроскопа (обычно ~7% от высоты)
+            h, w = img.shape
+            crop_h = int(h * 0.93)  # для 4608 это примерно 4285 (отрежет панель)
+            img = img[:crop_h, :]
+            
             h, w = img.shape
             filename_base = Path(tiff_file).stem
             
