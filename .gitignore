@@ -10,6 +10,7 @@ models/checkpoints*/
 
 # Архив для Colab
 diploma_colab.zip
+*.zip
 
 # Python
 .venv/
