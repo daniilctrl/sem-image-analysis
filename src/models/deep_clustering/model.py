@@ -32,7 +32,7 @@ class SimCLR(nn.Module):
 
     def forward(self, x):
         h = self.encoder(x)
-        h = h.squeeze() # (Batch, 2048)
+        h = torch.flatten(h, 1) # (Batch, 2048)
         
         z = self.projector(h) # (Batch, 128)
         
