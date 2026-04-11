@@ -35,6 +35,9 @@ Thumbs.db
 /tmp/
 *.log
 
+# Локальные материалы (практики, черновики, утилиты) — не для репозитория
+_local/
+
 # Spec-driven docs (local only)
 .specify/
 
@@ -47,6 +50,7 @@ data/crystal/visualizations/
 data/crystal/visualizations_test/
 data/crystal/visualizations_*/
 data/crystal/atoms.parquet
+data/crystal/*.xlsx
 
 # Generated reports and media
 data/**/*.html
