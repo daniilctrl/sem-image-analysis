@@ -113,16 +113,17 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Load crystal surface data from Excel")
+    _root = Path(__file__).resolve().parents[2]
     parser.add_argument(
         "--input",
         type=str,
-        default=r"c:\projects\diploma\coordinates_and_neighbours_50.xlsx",
+        default=str(_root / "data" / "crystal" / "coordinates_and_neighbours_50.xlsx"),
         help="Path to the .xlsx data file",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default=r"c:\projects\diploma\data\crystal",
+        default=str(_root / "data" / "crystal"),
         help="Directory to save processed data",
     )
     args = parser.parse_args()

@@ -98,18 +98,17 @@ def atoms_to_patch(
     v_px = v_px[mask]
     features = neighbor_features[mask]
     
-    # Заполнение патча (если несколько атомов попадают в один пиксель — берём среднее)
+    # Заполнение патча через np.add.at — в 5–20× быстрее Python-цикла.
+    # Если несколько атомов попадают в один пиксель — берём среднее.
     patch = np.zeros((5, resolution, resolution), dtype=np.float32)
     counts = np.zeros((resolution, resolution), dtype=np.float32)
-    
-    for i in range(len(u_px)):
-        patch[:, v_px[i], u_px[i]] += features[i]
-        counts[v_px[i], u_px[i]] += 1.0
-    
-    # Среднее для пикселей с несколькими атомами
+
+    np.add.at(patch, (slice(None), v_px, u_px), features.T)  # (5, N) → накопление
+    np.add.at(counts, (v_px, u_px), 1.0)
+
+    # Нормировка пикселей с несколькими атомами
     nonzero = counts > 0
-    for ch in range(5):
-        patch[ch][nonzero] /= counts[nonzero]
+    patch[:, nonzero] /= counts[nonzero]
     
     return patch
 
@@ -329,8 +328,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate 2D patches from 3D crystal surface data")
-    parser.add_argument("--parquet_path", type=str, default=r"c:\projects\diploma\data\crystal\atoms.parquet")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\crystal\patches")
+    _root = Path(__file__).resolve().parents[2]
+    parser.add_argument("--parquet_path", type=str, default=str(_root / "data" / "crystal" / "atoms.parquet"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "crystal" / "patches"))
     parser.add_argument("--num_atoms", type=int, default=0, help="Number of anchor atoms (0 = all surface atoms)")
     parser.add_argument("--resolution", type=int, default=32, help="Patch resolution (32x32)")
     parser.add_argument("--window_radius", type=float, default=10.0, help="2D projection window radius")

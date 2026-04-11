@@ -81,6 +81,7 @@ class ChannelDrop:
     
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if torch.rand(1).item() < self.p:
+            x = x.clone()  # не мутируем оригинальный тензор (важно при mmap)
             ch = torch.randint(0, x.shape[0], (1,)).item()
             x[ch] = 0.0
         return x

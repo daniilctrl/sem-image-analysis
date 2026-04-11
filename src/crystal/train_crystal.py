@@ -63,9 +63,19 @@ def train(args):
     start_epoch = args.start_epoch
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
-        checkpoint = torch.load(args.resume, map_location=device, weights_only=True)
-        model.load_state_dict(checkpoint)
-        print(f"Loaded weights. Continuing from epoch {start_epoch + 1}.")
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            # Новый формат: полный checkpoint с optimizer и scheduler
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch = checkpoint.get('epoch', args.start_epoch) + 1
+            best_loss = checkpoint.get('best_loss', float('inf'))
+            print(f"Restored optimizer and scheduler state. Continuing from epoch {start_epoch + 1}.")
+        else:
+            # Старый формат: только веса модели
+            model.load_state_dict(checkpoint)
+            print(f"Loaded weights only (old checkpoint format). Continuing from epoch {start_epoch + 1}.")
 
     # 3. Training Loop
     output_path = Path(args.output_dir)
@@ -103,23 +113,37 @@ def train(args):
 
         scheduler.step()
 
-        # Save checkpoint
+        # Save checkpoint (полный формат: модель + optimizer + scheduler)
         if (epoch + 1) % args.save_every == 0 or (epoch + 1) == total_epochs:
             ckpt_name = f"crystal_simclr_epoch_{epoch + 1}.pth"
-            torch.save(model.state_dict(), output_path / ckpt_name)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'best_loss': best_loss,
+                'avg_loss': avg_loss,
+            }, output_path / ckpt_name)
             print(f"  Saved checkpoint: {ckpt_name}")
 
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(model.state_dict(), output_path / "crystal_simclr_best.pth")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'best_loss': best_loss,
+            }, output_path / "crystal_simclr_best.pth")
 
     print(f"\nTraining Complete! Best loss: {best_loss:.4f}")
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Crystal SimCLR Training")
-    parser.add_argument("--patch_dir", type=str, default=r"c:\projects\diploma\data\crystal\patches")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\models\crystal")
+    parser.add_argument("--patch_dir", type=str, default=str(_root / "data" / "crystal" / "patches"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "models" / "crystal"))
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)

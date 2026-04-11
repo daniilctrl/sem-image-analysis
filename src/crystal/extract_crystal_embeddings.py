@@ -50,7 +50,13 @@ def extract_embeddings(model, dataloader, device):
 
 def compute_metrics(embeddings, labels, label_name="CrystalSimCLR"):
     """Вычисление метрик кластеризации."""
-    sil = silhouette_score(embeddings, labels, metric="cosine")
+    # sample_size обязателен: полный silhouette на 150k × 512D занимает ~10 минут.
+    sil = silhouette_score(
+        embeddings, labels,
+        metric="cosine",
+        sample_size=min(10_000, len(embeddings)),
+        random_state=42,
+    )
     ch = calinski_harabasz_score(embeddings, labels)
     db = davies_bouldin_score(embeddings, labels)
     print(f"\n--- {label_name} Clustering Metrics ---")
@@ -116,10 +122,11 @@ def main(args):
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Extract crystal embeddings and cluster")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--patch_dir", type=str, default=r"c:\projects\diploma\data\crystal\patches")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\crystal\embeddings")
+    parser.add_argument("--patch_dir", type=str, default=str(_root / "data" / "crystal" / "patches"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "crystal" / "embeddings"))
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--workers", type=int, default=0)

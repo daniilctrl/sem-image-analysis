@@ -81,14 +81,17 @@ def plot_interactive_3d(meta_df, labels, n_clusters, output_dir):
     colors = get_colors(n_clusters)
     color_array = [colors[l] for l in labels]
 
-    # Текст при наведении
-    hover_text = [
-        f"Атом #{int(row.get('atom_idx', i))}<br>"
-        f"X={row['X']:.1f}, Y={row['Y']:.1f}, Z={row['Z']:.1f}<br>"
-        f"Кластер: {labels[i]}<br>"
-        f"Grayscale: {row.get('grayscale', 0):.3f}"
-        for i, (_, row) in enumerate(meta_df.iterrows())
-    ]
+    # Текст при наведении — векторизованная версия (в 20–50× быстрее iterrows)
+    atom_ids = meta_df.get('atom_idx', pd.RangeIndex(len(meta_df))).astype(int).astype(str)
+    grayscale = meta_df.get('grayscale', pd.Series(0.0, index=meta_df.index)).round(3).astype(str)
+    hover_text = (
+        "Атом #" + atom_ids
+        + "<br>X=" + meta_df['X'].round(1).astype(str)
+        + ", Y=" + meta_df['Y'].round(1).astype(str)
+        + ", Z=" + meta_df['Z'].round(1).astype(str)
+        + "<br>Кластер: " + pd.Series(labels).astype(str).values
+        + "<br>Grayscale: " + grayscale
+    ).tolist()
 
     fig = go.Figure()
 
@@ -300,9 +303,14 @@ def main(args):
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Визуализация кластеров кристалла")
-    parser.add_argument("--embeddings_dir", type=str, default=r"c:\projects\diploma\data\crystal\embeddings")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\crystal\visualizations\clusters")
+    parser.add_argument("--embeddings_dir", type=str, default=str(_root / "data" / "crystal" / "embeddings"))
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=str(_root / "data" / "crystal" / "visualizations" / "clusters"),
+    )
     parser.add_argument("--n_clusters", type=int, default=8)
     args = parser.parse_args()
     main(args)

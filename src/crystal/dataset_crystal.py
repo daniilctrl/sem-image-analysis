@@ -25,7 +25,9 @@ class CrystalPatchDataset(Dataset):
             subset: если > 0, берём случайную подвыборку
             seed: для воспроизводимости подвыборки
         """
-        self.patches = np.load(patches_path)  # (N, 5, H, W)
+        # mmap_mode='r': файл читается лениво — только нужные патчи попадают в RAM.
+        # Без этого: 149k × 5 × 32 × 32 × float32 ≈ 3 GB RAM загружается целиком.
+        self.patches = np.load(patches_path, mmap_mode='r')  # (N, 5, H, W)
         
         if subset > 0 and subset < len(self.patches):
             rng = np.random.default_rng(seed)

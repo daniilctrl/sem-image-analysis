@@ -180,17 +180,18 @@ def main(args):
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Visualize BCC crystal hemisphere surface")
     parser.add_argument(
         "--parquet_path",
         type=str,
-        default=r"c:\projects\diploma\data\crystal\atoms.parquet",
+        default=str(_root / "data" / "crystal" / "atoms.parquet"),
         help="Path to atoms.parquet (output of load_data.py)",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default=r"c:\projects\diploma\data\crystal\visualizations",
+        default=str(_root / "data" / "crystal" / "visualizations"),
         help="Directory to save visualization images",
     )
     args = parser.parse_args()

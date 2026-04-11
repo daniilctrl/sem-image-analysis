@@ -22,11 +22,18 @@ def get_symmetry_vectors(indices):
     # Возвращаем уникальные нормализованные векторы
     return np.unique(vecs, axis=0)
 
+# Полный набор значимых семейств граней для ОЦК-полусферы
+# (по рис. 3 из: Никифоров, Егоров, Шен, 2009)
 FAMILIES = {
     "{100}": get_symmetry_vectors((1, 0, 0)),
     "{110}": get_symmetry_vectors((1, 1, 0)),
     "{111}": get_symmetry_vectors((1, 1, 1)),
+    "{210}": get_symmetry_vectors((2, 1, 0)),
     "{211}": get_symmetry_vectors((2, 1, 1)),
+    "{221}": get_symmetry_vectors((2, 2, 1)),
+    "{310}": get_symmetry_vectors((3, 1, 0)),
+    "{321}": get_symmetry_vectors((3, 2, 1)),
+    "{411}": get_symmetry_vectors((4, 1, 1)),
 }
 
 def assign_miller_family(x, y, z, tolerance_deg=6.0):
@@ -73,20 +80,23 @@ def main(args):
     unit_vecs = np.zeros_like(xyz)
     unit_vecs[valid_mask] = xyz[valid_mask] / norms[valid_mask]
     
+    # Эксклюзивная классификация: каждому атому — только ближайшая грань
+    # (исправлено: ранее атом мог быть перезаписан последним подходящим семейством)
     results = np.full(len(df), "Vicinal/Mixed", dtype=object)
-    
+    best_angles = np.full(len(df), np.inf)
+
     for family_name, ref_vecs in FAMILIES.items():
-        # ref_vecs shape: (N, 3), unit_vecs shape: (V, 3)
-        # Для каждого вектора находим макс dot product (мин угол) со всем семейством
-        dots = np.abs(np.dot(unit_vecs, ref_vecs.T)) # shape (V, N)
+        dots = np.abs(np.dot(unit_vecs, ref_vecs.T))  # shape (V, N)
         max_dots = np.max(dots, axis=1)
         angles = np.arccos(np.clip(max_dots, -1.0, 1.0)) * (180.0 / np.pi)
-        
-        # Обновляем результаты
-        match_mask = angles <= args.tol
-        results[match_mask] = family_name
+
+        # Обновляем только если этот угол меньше предыдущего лучшего И в пределах допуска
+        better_mask = (angles < best_angles) & (angles <= args.tol)
+        results[better_mask] = family_name
+        best_angles[better_mask] = angles[better_mask]
 
     df['miller_family'] = results
+    df['miller_angle_deg'] = best_angles  # сохраняем для диагностики
     
     # Кросс-табуляция (Матрица совпадений)
     cluster_col = f"cluster_{args.n_clusters}"
@@ -125,12 +135,20 @@ def main(args):
     plt.savefig(output_dir / "miller_composition_heatmap.png", dpi=150)
     plt.close()
     
-    print(f"\n✅ Готово! Матрицы сохранены в {output_dir}")
+    print(f"\nГотово. Матрицы сохранены в {output_dir}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--embeddings_dir", type=str, default=r"c:\projects\diploma\data\crystal\embeddings")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\crystal\analysis")
+    parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default=str(Path(__file__).resolve().parents[2] / "data" / "crystal" / "embeddings"),
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=str(Path(__file__).resolve().parents[2] / "data" / "crystal" / "analysis"),
+    )
     parser.add_argument("--n_clusters", type=int, default=8, help="Идентификатор номера кластеризации")
     parser.add_argument("--tol", type=float, default=6.0, help="Допуск отклонения угла от идеальной плоскости (градусы)")
     

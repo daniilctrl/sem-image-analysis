@@ -119,10 +119,11 @@ def main(args):
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Подтверждение физического смысла SimCLR кластеров")
-    parser.add_argument("--embeddings_dir", type=str, default=r"c:\projects\diploma\data\crystal\embeddings")
-    parser.add_argument("--patch_dir", type=str, default=r"c:\projects\diploma\data\crystal\patches")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\crystal\analysis")
+    parser.add_argument("--embeddings_dir", type=str, default=str(_root / "data" / "crystal" / "embeddings"))
+    parser.add_argument("--patch_dir", type=str, default=str(_root / "data" / "crystal" / "patches"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "crystal" / "analysis"))
     parser.add_argument("--n_clusters", type=int, default=8, help="Номер кластеризации (какую колонку брать из CSV)")
     
     args = parser.parse_args()

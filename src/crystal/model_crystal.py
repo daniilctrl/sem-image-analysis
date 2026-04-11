@@ -28,19 +28,9 @@ class CrystalSimCLR(nn.Module):
         resnet = models.resnet18(weights=None)
         self.enc_dim = resnet.fc.in_features  # 512 для ResNet18
         
-        # Заменяем первый Conv2d: 3 → in_channels
-        original_conv = resnet.conv1
-        resnet.conv1 = nn.Conv2d(
-            in_channels,
-            original_conv.out_channels,
-            kernel_size=original_conv.kernel_size,
-            stride=original_conv.stride,
-            padding=original_conv.padding,
-            bias=original_conv.bias is not None,
-        )
-        
-        # Для малых 32×32 патчей убираем MaxPool и уменьшаем stride
-        # (иначе feature map станет слишком маленьким)
+        # Для малых 32×32 патчей убираем MaxPool и уменьшаем stride conv1.
+        # Оригинальный ResNet18 conv1 (7x7, stride=2) + maxpool (stride=2) даёт
+        # feature map 32→8, что слишком мало. Заменяем на 3x3, stride=1 + Identity.
         resnet.conv1 = nn.Conv2d(
             in_channels, 64,
             kernel_size=3, stride=1, padding=1, bias=False
@@ -51,11 +41,14 @@ class CrystalSimCLR(nn.Module):
         modules = list(resnet.children())[:-1]  # всё кроме fc
         self.encoder = nn.Sequential(*modules)
         
-        # Projection Head (как в SimCLR)
+        # Projection Head (SimCLR v2: Linear → BN → ReLU → Linear → BN)
+        # BatchNorm существенно стабилизирует обучение в контрастивных схемах.
         self.projector = nn.Sequential(
-            nn.Linear(self.enc_dim, self.enc_dim),
-            nn.ReLU(),
-            nn.Linear(self.enc_dim, out_dim),
+            nn.Linear(self.enc_dim, self.enc_dim, bias=False),
+            nn.BatchNorm1d(self.enc_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.enc_dim, out_dim, bias=False),
+            nn.BatchNorm1d(out_dim),
         )
     
     def forward(self, x: torch.Tensor):
