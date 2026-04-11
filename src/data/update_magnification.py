@@ -60,8 +60,9 @@ def extract_magnification_from_tiff(tiff_path):
 
 def update_metadata():
     """Обновляет tiles_metadata.csv, добавляя реальные увеличения из TIFF."""
-    raw_dir = Path(r"c:\projects\diploma\data\raw")
-    csv_path = Path(r"c:\projects\diploma\data\processed\tiles_metadata.csv")
+    _root = Path(__file__).resolve().parents[2]
+    raw_dir = _root / "data" / "raw"
+    csv_path = _root / "data" / "processed" / "tiles_metadata.csv"
     
     # 1. Считываем CSV
     df = pd.read_csv(csv_path)

@@ -673,15 +673,16 @@ def main(args):
         output_path=report_path,
     )
 
-    print(f"\n✅ Report saved to {report_path}")
+    print(f"\nReport saved to {report_path}")
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="SiC Structure Clustering Evaluation")
-    parser.add_argument("--emb_dir", type=str, default=r"c:\projects\diploma\data\embeddings")
-    parser.add_argument("--meta_path", type=str, default=r"c:\projects\diploma\data\processed\tiles_metadata.csv")
-    parser.add_argument("--data_dir", type=str, default=r"c:\projects\diploma\data\processed")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\results")
+    parser.add_argument("--emb_dir", type=str, default=str(_root / "data" / "embeddings"))
+    parser.add_argument("--meta_path", type=str, default=str(_root / "data" / "processed" / "tiles_metadata.csv"))
+    parser.add_argument("--data_dir", type=str, default=str(_root / "data" / "processed"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "results"))
     parser.add_argument("--model_name", type=str, default="Baseline ResNet50")
     parser.add_argument("--K", type=int, default=4)
     args = parser.parse_args()

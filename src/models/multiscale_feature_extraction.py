@@ -137,8 +137,9 @@ def extract_multiscale_features(data_dir, metadata_path, output_dir, batch_size=
     print(f"Embeddings saved to {emb_file}")
 
 if __name__ == "__main__":
-    data_directory = r"c:\projects\diploma\data\processed"
-    metadata_file = r"c:\projects\diploma\data\processed\tiles_metadata.csv"
-    output_directory = r"c:\projects\diploma\data\embeddings"
-    
+    _root = Path(__file__).resolve().parents[2]
+    data_directory = str(_root / "data" / "processed")
+    metadata_file = str(_root / "data" / "processed" / "tiles_metadata.csv")
+    output_directory = str(_root / "data" / "embeddings")
+
     extract_multiscale_features(data_directory, metadata_file, output_directory, batch_size=32)

@@ -77,8 +77,9 @@ def visualize_umap(embeddings_path, metadata_path, output_dir):
     print(f"UMAP coordinates saved to {output_path / 'umap_coordinates.csv'}")
 
 if __name__ == "__main__":
-    embeddings_file = r"c:\projects\diploma\data\embeddings\resnet50_embeddings.npy"
-    metadata_file = r"c:\projects\diploma\data\processed\tiles_metadata.csv"
-    output_directory = r"c:\projects\diploma\data\embeddings"
-    
+    _root = Path(__file__).resolve().parents[2]
+    embeddings_file = str(_root / "data" / "embeddings" / "resnet50_embeddings.npy")
+    metadata_file = str(_root / "data" / "processed" / "tiles_metadata.csv")
+    output_directory = str(_root / "data" / "embeddings")
+
     visualize_umap(embeddings_file, metadata_file, output_directory)

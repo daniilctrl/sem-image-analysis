@@ -15,7 +15,8 @@ import cv2
 
 # Import from our existing modules
 import sys
-sys.path.append(r"c:\projects\diploma")
+_repo = Path(__file__).resolve().parents[2]
+sys.path.append(str(_repo))
 from src.models.feature_extraction import TileDataset
 from src.models.multiscale_feature_extraction import MultiScaleTileDataset
 
@@ -120,9 +121,9 @@ def run_experiment(data_dir, metadata_path, output_dir, samples_per_group=10):
     print(f"\nExperiment finished! Comparison graph saved to {plot_path}")
 
 if __name__ == "__main__":
-    data_directory = r"c:\projects\diploma\data\processed"
-    metadata_file = r"c:\projects\diploma\data\processed\tiles_metadata.csv"
-    output_directory = r"c:\projects\diploma\data\embeddings"
-    
+    data_directory = str(_repo / "data" / "processed")
+    metadata_file = str(_repo / "data" / "processed" / "tiles_metadata.csv")
+    output_directory = str(_repo / "data" / "embeddings")
+
     # Use 10 samples per group (roughly 550 total samples since we have 55 groups)
     run_experiment(data_directory, metadata_file, output_directory, samples_per_group=10)

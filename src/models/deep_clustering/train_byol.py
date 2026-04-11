@@ -104,10 +104,11 @@ def train(args):
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser(description="BYOL Training for SEM Analysis")
-    parser.add_argument("--data_dir", type=str, default=r"c:\projects\diploma\data\processed")
-    parser.add_argument("--metadata_path", type=str, default=r"c:\projects\diploma\data\processed\tiles_metadata.csv")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\models\checkpoints_byol")
+    parser.add_argument("--data_dir", type=str, default=str(_root / "data" / "processed"))
+    parser.add_argument("--metadata_path", type=str, default=str(_root / "data" / "processed" / "tiles_metadata.csv"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "models" / "checkpoints_byol"))
 
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--epochs", type=int, default=30)

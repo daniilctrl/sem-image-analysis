@@ -69,8 +69,9 @@ without explicitly tuning for scale-invariance yet. This serves as our baseline.
     print(f"Report saved to {report_file}")
     
 if __name__ == "__main__":
-    embeddings_file = r"c:\projects\diploma\data\embeddings\resnet50_embeddings.npy"
-    metadata_file = r"c:\projects\diploma\data\processed\tiles_metadata.csv"
-    output_directory = r"c:\projects\diploma\data\embeddings"
-    
+    _root = Path(__file__).resolve().parents[2]
+    embeddings_file = str(_root / "data" / "embeddings" / "resnet50_embeddings.npy")
+    metadata_file = str(_root / "data" / "processed" / "tiles_metadata.csv")
+    output_directory = str(_root / "data" / "embeddings")
+
     evaluate_embeddings(embeddings_file, metadata_file, output_directory)

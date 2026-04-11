@@ -104,8 +104,9 @@ def process_images(input_dir, output_dir, tile_size=256, stride=256):
     return df
 
 if __name__ == "__main__":
-    input_directory = r"c:\projects\diploma\data\raw"
-    output_directory = r"c:\projects\diploma\data\processed"
-    
+    _root = Path(__file__).resolve().parents[2]
+    input_directory = str(_root / "data" / "raw")
+    output_directory = str(_root / "data" / "processed")
+
     # Полный прогон датасета (нарезка без перекрытия)
     process_images(input_directory, output_directory, tile_size=256, stride=256)

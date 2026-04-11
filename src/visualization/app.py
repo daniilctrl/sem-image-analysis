@@ -7,7 +7,7 @@ import faiss
 from pathlib import Path
 
 # ==================== НАСТРОЙКИ ====================
-BASE_DIR = Path(r"c:\projects\diploma")
+BASE_DIR = Path(__file__).resolve().parents[2]
 PROCESSED_DATA_DIR = BASE_DIR / "data" / "processed"
 EMBEDDINGS_DIR = BASE_DIR / "data" / "embeddings"
 META_FILE = PROCESSED_DATA_DIR / "tiles_metadata.csv"

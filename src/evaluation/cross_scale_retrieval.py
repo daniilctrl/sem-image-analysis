@@ -58,7 +58,7 @@ def run_retrieval_test(embeddings, df, K=10):
         query_source = multi_scale.loc[idx, 'source_image']
         
         # Ищем K+1 (первый — сам запрос)
-        sims, indices = index.search(query_emb, K + 50)  # берём больше, чтобы отфильтровать self
+        sims, indices = index.search(query_emb, K * 5)  # берём больше, чтобы отфильтровать self
         
         # Убираем самого себя и тайлы из того же source_image (того же снимка)
         retrieved_materials = []
@@ -197,12 +197,13 @@ def main(args):
 
 
 if __name__ == "__main__":
+    _root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="Cross-Scale Retrieval Test")
-    parser.add_argument("--emb_dir", type=str, default=r"c:\projects\diploma\data\embeddings")
+    parser.add_argument("--emb_dir", type=str, default=str(_root / "data" / "embeddings"))
     parser.add_argument("--emb_file", type=str, default="resnet50_embeddings.npy")
     parser.add_argument("--names_file", type=str, default="embedding_names.csv")
-    parser.add_argument("--meta_path", type=str, default=r"c:\projects\diploma\data\processed\tiles_metadata.csv")
-    parser.add_argument("--output_dir", type=str, default=r"c:\projects\diploma\data\results")
+    parser.add_argument("--meta_path", type=str, default=str(_root / "data" / "processed" / "tiles_metadata.csv"))
+    parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "results"))
     parser.add_argument("--model_name", type=str, default="Baseline")
     parser.add_argument("--K", type=int, default=10)
     
