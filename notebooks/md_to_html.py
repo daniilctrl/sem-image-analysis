@@ -47,5 +47,5 @@ def convert_md_to_html(md_path, html_path):
 
 if __name__ == "__main__":
     md_file = r"C:\Users\Даня\.gemini\antigravity\brain\4845dc6e-05c3-47d5-a3aa-ea9b56675ba0\walkthrough.md"
-    html_file = r"c:\projects\diploma\report.html"
+    html_file = str(Path(__file__).resolve().parents[1] / "report.html")
     convert_md_to_html(md_file, html_file)
