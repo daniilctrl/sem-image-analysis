@@ -23,7 +23,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
+from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score,
@@ -126,10 +126,10 @@ def main(args):
 
     for k in k_values:
         print(f"\n--- k = {k} ---")
-        km = KMeans(n_clusters=k, n_init=10, random_state=42, max_iter=300)
+        km = MiniBatchKMeans(n_clusters=k, n_init=5, random_state=42, max_iter=200, batch_size=4096)
         labels = km.fit_predict(embeddings)
 
-        sil = silhouette_score(embeddings, labels, sample_size=min(50000, len(embeddings)), random_state=42)
+        sil = silhouette_score(embeddings, labels, metric="cosine", sample_size=min(10_000, len(embeddings)), random_state=42)
         ch = calinski_harabasz_score(embeddings, labels)
         db = davies_bouldin_score(embeddings, labels)
         inertia = km.inertia_
@@ -301,5 +301,6 @@ if __name__ == "__main__":
         default=6.0,
         help="Допуск для классификации Миллера (градусы)",
     )
+
     args = parser.parse_args()
     main(args)

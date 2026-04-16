@@ -151,6 +151,5 @@ if __name__ == "__main__":
     )
     parser.add_argument("--n_clusters", type=int, default=8, help="Идентификатор номера кластеризации")
     parser.add_argument("--tol", type=float, default=6.0, help="Допуск отклонения угла от идеальной плоскости (градусы)")
-    
     args = parser.parse_args()
     main(args)

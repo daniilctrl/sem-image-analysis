@@ -46,7 +46,7 @@ def run_retrieval(embeddings, df, K=10):
         q_mag = df.loc[idx, 'mag']
         q_source = df.loc[idx, 'source_image']
         
-        sims, ret_ids = index.search(query, K + 50)
+        sims, ret_ids = index.search(query, K * 5)  # берём больше, чтобы отфильтровать self и source_image
         
         mat_hits = 0
         cross_hits = 0
