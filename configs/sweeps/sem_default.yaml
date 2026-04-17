@@ -1,0 +1,86 @@
+# Дефолтный sweep для SEM-ветки. Запускается через scripts/run_sweep.py.
+#
+# Структура:
+#   common:          — общие поля для всех экспериментов (перекрываемы per-run)
+#   defaults:        — дефолтные значения параметров (fallback, если не заданы)
+#   experiments:     — список конфигураций; каждая запускается отдельно
+#
+# Каждый эксперимент получает отдельные: папку чекпоинтов, TB-логи, run_name.
+# Все эксперименты разделяют данные (--data_dir, --metadata_path) и общие
+# параметры tuning (epochs, batch_size и т.д., если не переопределены).
+#
+# Запуск:
+#   python3 scripts/run_sweep.py --config configs/sweeps/sem_default.yaml
+#   python3 scripts/run_sweep.py --config configs/sweeps/sem_default.yaml --only simclr_t05_default
+#   python3 scripts/run_sweep.py --config configs/sweeps/sem_default.yaml --dry_run
+
+common:
+  # Пути переопределяются через CLI в Colab (см. scripts/run_sweep.py --checkpoints_root):
+  checkpoints_root: "models/checkpoints"
+  logs_root: "logs"
+  results_root: "data/results"
+
+  # Общие hyperparameters; могут быть перекрыты per-experiment
+  data_dir: "data/processed"
+  metadata_path: "data/processed/tiles_metadata.csv"
+  batch_size: 64
+  learning_rate: 3.0e-4
+  val_frac: 0.1
+  save_every: 5
+  seed: 42
+  workers: 4
+
+defaults:
+  temperature: 0.5
+  epochs: 30
+  # Augmentation defaults (совпадают с AugmentationConfig)
+  crop_scale_min: 0.2
+  crop_scale_max: 1.0
+  color_jitter_p: 0.8
+  brightness: 0.4
+  contrast: 0.4
+  blur_p: 0.5
+  blur_sigma_min: 0.1
+  blur_sigma_max: 2.0
+  noise_p: 0.2
+  noise_std: 0.04
+  # BYOL-specific
+  ema_tau: 0.996
+  ema_tau_schedule: "cosine"
+
+experiments:
+  # ─────────────────────────── SimCLR ───────────────────────────
+  - name: "simclr_t05_default"
+    type: "simclr"
+    description: "SimCLR, τ=0.5, default aug, 30 эпох — baseline для сравнения"
+
+  - name: "simclr_t02_default"
+    type: "simclr"
+    description: "Lower temperature — более агрессивный contrastive"
+    temperature: 0.2
+
+  - name: "simclr_t05_strong_crop"
+    type: "simclr"
+    description: "Более сильный RandomResizedCrop — проверка на scale invariance"
+    crop_scale_min: 0.08
+    crop_scale_max: 1.0
+
+  - name: "simclr_t05_no_blur"
+    type: "simclr"
+    description: "Ablation: без blur (проверить, нужен ли дефокус)"
+    blur_p: 0.0
+
+  # ─────────────────────────── BYOL ─────────────────────────────
+  - name: "byol_cosine_30ep"
+    type: "byol"
+    description: "BYOL, cosine tau ramp-up, 30 эпох — primary BYOL run"
+
+  - name: "byol_cosine_60ep"
+    type: "byol"
+    description: "BYOL с более долгим обучением (60 эпох)"
+    epochs: 60
+
+  - name: "byol_constant_tau"
+    type: "byol"
+    description: "Ablation: константный tau vs cosine — проверка значимости ramp-up"
+    ema_tau_schedule: "constant"
