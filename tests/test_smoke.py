@@ -313,6 +313,9 @@ class TestModuleSyntax:
         "src/evaluation/scale_invariance_metrics.py",
         "src/evaluation/run_sem_evaluation.py",
         "src/evaluation/evaluate_sic_clustering.py",
+        "src/data/annotate_tiles.py",
+        "src/data/sft_sampler.py",
+        "src/data/generate_sft_labels.py",
     ]
 
     def test_all_modules_parse(self):
