@@ -262,6 +262,22 @@ sem:
     unified_script: "src/evaluation/run_sem_evaluation.py"
     shared_utils: "src/evaluation/eval_utils.py"
 
+    linear_probe:
+      script: "src/evaluation/linear_probe.py"
+      protocol: "stratified K-fold (default K=5) logistic regression on frozen embeddings"
+      ground_truth: "data/sft_annotations.csv (187 labels across 8 morphological clusters)"
+      models_compared: ["Baseline (ImageNet)", "SimCLR (30 ep)", "BYOL (30 ep)"]
+      preprocessing: "L2-normalize + StandardScaler fit on train fold"
+      classifier: "sklearn.linear_model.LogisticRegression (C=10, lbfgs)"
+      metrics: ["accuracy", "balanced_accuracy", "macro_f1"]
+      rationale: >
+        Without linear probe, comparison of Baseline / SimCLR / BYOL relies
+        only on intrinsic clustering metrics (Silhouette, CH, DB) and
+        cross-scale retrieval precision. Intrinsic metrics don't answer the
+        key question: does the model distinguish the classes an expert
+        cares about? Linear probe closes this gap using the already-existing
+        manual SFT labels.
+
     cross_scale_retrieval:
       script: "src/evaluation/cross_scale_retrieval.py"
       comparison_wrapper: "src/evaluation/cross_scale_comparison.py"
