@@ -71,6 +71,19 @@ experiment_manifest.yaml      # Full hyperparameters, seeds, paths, versions
 ## Быстрый старт
 
 ```bash
+# Core install (train + extract + evaluate):
+pip install -e .
+
+# С визуализациями (UMAP, seaborn, plotly, gradio):
+pip install -e ".[viz]"
+
+# С подготовкой данных (opencv, tifffile, openpyxl, h5py):
+pip install -e ".[dataprep]"
+
+# Всё сразу:
+pip install -e ".[all,dev]"
+
+# Legacy путь (эквивалентно pip install -e . без extras):
 pip install -r requirements.txt
 
 # Smoke-check тесты

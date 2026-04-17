@@ -1,0 +1,8 @@
+# Development and testing dependencies.
+# Install with: pip install -r requirements-dev.txt
+# (or use: pip install -e ".[dev]" for the same effect via pyproject)
+
+-r requirements.txt
+
+pytest>=7.0
+pytest-cov>=4.0
