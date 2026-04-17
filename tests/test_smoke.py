@@ -306,7 +306,9 @@ class TestModuleSyntax:
         "src/evaluation/run_sem_evaluation.py",
         "src/evaluation/evaluate_sic_clustering.py",
         "src/evaluation/linear_probe.py",
+        "src/evaluation/knn_probe.py",
         "src/utils/repro.py",
+        "src/utils/stats.py",
         "scripts/predict_k_theory.py",
         "scripts/regenerate_embedding_names.py",
     ]
