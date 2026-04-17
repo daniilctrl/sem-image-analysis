@@ -32,7 +32,7 @@ common:
 
 defaults:
   temperature: 0.5
-  epochs: 30
+  epochs: 60
   # Augmentation defaults (совпадают с AugmentationConfig)
   crop_scale_min: 0.2
   crop_scale_max: 1.0
@@ -52,7 +52,7 @@ experiments:
   # ─────────────────────────── SimCLR ───────────────────────────
   - name: "simclr_t05_default"
     type: "simclr"
-    description: "SimCLR, τ=0.5, default aug, 30 эпох — baseline для сравнения"
+    description: "SimCLR, τ=0.5, default aug, 60 эпох — baseline для сравнения"
 
   - name: "simclr_t02_default"
     type: "simclr"
@@ -71,14 +71,14 @@ experiments:
     blur_p: 0.0
 
   # ─────────────────────────── BYOL ─────────────────────────────
-  - name: "byol_cosine_30ep"
+  - name: "byol_cosine_100ep"
     type: "byol"
-    description: "BYOL, cosine tau ramp-up, 30 эпох — primary BYOL run"
+    description: "BYOL, cosine tau ramp-up, 100 эпох — primary BYOL run"
+    epochs: 100
 
   - name: "byol_cosine_60ep"
     type: "byol"
-    description: "BYOL с более долгим обучением (60 эпох)"
-    epochs: 60
+    description: "BYOL, cosine tau ramp-up, 60 эпох — ablation: shorter training"
 
   - name: "byol_constant_tau"
     type: "byol"

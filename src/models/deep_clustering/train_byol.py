@@ -3,8 +3,8 @@
 Использует те же аугментации и датасет, что и SimCLR.
 
 Использование:
-  python train_byol.py --epochs 30 --batch_size 64
-  python train_byol.py --resume checkpoint.pth --start_epoch 15 --epochs 15
+  python train_byol.py --epochs 100 --batch_size 64
+  python train_byol.py --resume checkpoint.pth --start_epoch 30 --epochs 70
 """
 import math
 import os
@@ -58,7 +58,25 @@ def train(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Training BYOL on {device}...")
 
-    # 1. Dataset & Dataloader
+    # 1. Dataset & Dataloader — pre-flight checks
+    meta = Path(args.metadata_path)
+    data = Path(args.data_dir)
+    if not meta.exists():
+        hint = (
+            "tiles_metadata.csv not found.\n"
+            f"  Expected path: {meta}\n"
+            "  On Colab, make sure the data-extraction cell (cell 2) ran successfully:\n"
+            "    !unzip -qo processed_data_v2.zip -d data/processed/\n"
+            "  Check that Google Drive is mounted and the zip is in "
+            "drive/MyDrive/diploma_data/."
+        )
+        raise FileNotFoundError(hint)
+    if not data.is_dir():
+        raise FileNotFoundError(
+            f"Data directory does not exist: {data}\n"
+            "  Run the data-extraction cell in the Colab notebook first."
+        )
+
     df = pd.read_csv(args.metadata_path)
     if args.subset > 0:
         df = df.sample(args.subset, random_state=args.seed)
@@ -275,7 +293,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default=str(_root / "models" / "checkpoints_byol"))
 
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--ema_tau", type=float, default=0.996,
@@ -289,8 +307,8 @@ if __name__ == "__main__":
     parser.add_argument("--subset", type=int, default=0)
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument("--start_epoch", type=int, default=0)
-    parser.add_argument("--save_every", type=int, default=5,
-                        help="Save periodic checkpoint every N epochs (default: 5)")
+    parser.add_argument("--save_every", type=int, default=10,
+                        help="Save periodic checkpoint every N epochs (default: 10)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Global seed for reproducibility (torch/numpy/random/cudnn)")
     parser.add_argument("--val_frac", type=float, default=0.0,
