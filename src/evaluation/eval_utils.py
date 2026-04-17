@@ -122,20 +122,38 @@ def load_aligned_data(
     emb_dir: Path | str | None = None,
     meta_path: Path | str | None = None,
     names_file: str | None = None,
+    allow_fallback: bool = False,
 ) -> tuple[np.ndarray, pd.DataFrame]:
     """Загружает эмбеддинги и метаданные с гарантированным выравниванием.
 
-    Порядок строк в .npy файле может не совпадать с tiles_metadata.csv.
-    Для каждой модели используется свой names-файл (bridge):
+    Порядок строк в .npy файле не совпадает с tiles_metadata.csv. Для каждой
+    модели используется свой names-файл (bridge):
       - Baseline: embedding_names.csv
       - SimCLR:   simclr/finetuned_embedding_names.csv
       - BYOL:     byol/finetuned_embedding_names.csv
 
     Алгоритм:
-      1. Загрузить model-specific names file (row_idx → tile_name)
+      1. Загрузить model-specific names file (row_idx -> tile_name)
       2. Загрузить tiles_metadata.csv
-      3. Inner merge по tile_name
-      4. Извлечь aligned подмножество строк из embeddings
+      3. Проверить строгое соответствие len(names) == len(embeddings)
+      4. Inner merge по tile_name
+      5. Извлечь aligned подмножество строк из embeddings
+
+    Раньше здесь был fallback «index-aligned raw metadata» на случай, когда
+    `embedding_names.csv` устарел. Он опасен: две несовместимые выборки
+    могут случайно совпасть по размеру и дать молча неверные метки. Теперь
+    такой fallback требует явного `allow_fallback=True` — используется только
+    в переходный период; для production следует регенерировать names-файл
+    (см. scripts/regenerate_embedding_names.py).
+
+    Аргументы:
+        model_name: Ключ из MODEL_CONFIGS или прямой путь к .npy файлу.
+        emb_dir: Директория с эмбеддингами.
+        meta_path: Путь к tiles_metadata.csv.
+        names_file: Явный путь к names-файлу (override).
+        allow_fallback: Если True, разрешает index-alignment при устаревшем
+            names-файле, но только при len(meta_raw) == len(embeddings).
+            Выводит громкое предупреждение.
 
     Возвращает:
         (embeddings_aligned, df_aligned) — оба имеют одинаковое число строк,
@@ -153,7 +171,6 @@ def load_aligned_data(
         names_file = MODEL_NAMES_FILES.get(model_name, "embedding_names.csv")
     names_path = emb_dir / names_file
     if not names_path.exists():
-        # Fallback: try root embedding_names.csv
         fallback_path = emb_dir / "embedding_names.csv"
         if fallback_path.exists() and fallback_path != names_path:
             import warnings
@@ -166,18 +183,16 @@ def load_aligned_data(
         else:
             raise FileNotFoundError(
                 f"Names file not found: {names_path}. "
-                f"Cannot verify embedding ↔ metadata alignment."
+                f"Cannot verify embedding <-> metadata alignment. "
+                f"Run scripts/regenerate_embedding_names.py."
             )
     names_df = pd.read_csv(names_path)
 
-    # 3. Load metadata (raw — without dedup, since embeddings may correspond
-    #    to all rows including duplicates)
     meta_raw = load_metadata(meta_path)
     meta_dedup = meta_raw.drop_duplicates(subset=["tile_name"])
 
     if len(names_df) == len(embeddings):
-        # CASE A: embedding_names is up-to-date — use it as the bridge.
-        # Merge with deduped metadata (each tile_name appears once).
+        # Канонический путь: embedding_names -> inner merge with metadata.
         names_df["_emb_idx"] = range(len(names_df))
         merged = names_df.merge(meta_dedup, on="tile_name", how="inner")
 
@@ -196,34 +211,33 @@ def load_aligned_data(
             f"  Aligned via embedding_names.csv: {len(merged)} tiles "
             f"({coverage:.1f}% of {len(names_df)} embeddings matched metadata)"
         )
-    elif len(meta_raw) == len(embeddings):
-        # CASE B: embedding_names is stale, but raw metadata count matches
-        # embeddings. Assume row-order alignment (embeddings[i] ↔ meta.iloc[i]).
+        return embeddings_aligned, df_aligned
+
+    if allow_fallback and len(meta_raw) == len(embeddings):
         import warnings
         warnings.warn(
-            f"embedding_names.csv ({len(names_df)}) != embeddings ({len(embeddings)}). "
-            f"Raw metadata count ({len(meta_raw)}) matches embeddings — assuming "
-            f"index alignment. Regenerate embedding_names.csv to restore verified "
-            f"alignment.",
+            f"embedding_names.csv ({len(names_df)}) != embeddings ({len(embeddings)}), "
+            f"but len(meta_raw)={len(meta_raw)} matches. Assuming index alignment "
+            f"because allow_fallback=True. This is OPAQUE and may silently produce "
+            f"wrong labels if row order of embeddings differs from metadata. "
+            f"Regenerate names file via scripts/regenerate_embedding_names.py.",
             UserWarning,
             stacklevel=2,
         )
-        embeddings_aligned = embeddings
-        df_aligned = meta_raw.reset_index(drop=True)
         print(
-            f"  WARNING: embedding_names.csv stale ({len(names_df)} rows vs "
-            f"{len(embeddings)} embeddings). Using index-aligned metadata "
-            f"({len(meta_raw)} rows)."
+            f"  WARNING: using OPAQUE index-alignment fallback "
+            f"(names stale: {len(names_df)} vs {len(embeddings)})."
         )
-    else:
-        raise ValueError(
-            f"Cannot align data: embedding_names ({len(names_df)}), "
-            f"embeddings ({len(embeddings)}), metadata_raw ({len(meta_raw)}), "
-            f"metadata_dedup ({len(meta_dedup)}) — no pair matches. "
-            f"Regenerate embeddings or metadata."
-        )
+        return embeddings, meta_raw.reset_index(drop=True)
 
-    return embeddings_aligned, df_aligned
+    raise ValueError(
+        f"Alignment failed: len(names)={len(names_df)} != len(embeddings)={len(embeddings)}. "
+        f"meta_raw={len(meta_raw)}, meta_dedup={len(meta_dedup)}. "
+        f"Fix options:\n"
+        f"  1. Regenerate names file: python scripts/regenerate_embedding_names.py\n"
+        f"  2. Re-extract embeddings: python src/models/deep_clustering/extract_simclr_embeddings.py\n"
+        f"  3. If you KNOW row order matches, pass allow_fallback=True (dangerous)."
+    )
 
 
 def l2_normalize(embeddings: np.ndarray) -> np.ndarray:
