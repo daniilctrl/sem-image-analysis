@@ -12,10 +12,12 @@
   python src/crystal/optimize_clusters.py \
       --embeddings_dir data/crystal/embeddings \
       --output_dir data/crystal/analysis \
-      --k_range 3 4 5 6 7 8 10 12 15 20
+      --k_range 3 4 5 6 7 8 10 12 15 20 25 30 40 50
 """
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +37,60 @@ from sklearn.metrics import (
 # ---------------------------------------------------------------------------
 # Аналитическая классификация Миллера (единый модуль miller_utils.py)
 # ---------------------------------------------------------------------------
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.crystal.miller_utils import assign_miller_labels
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции
+# ---------------------------------------------------------------------------
+
+def _minmax_normalize(series: pd.Series, invert: bool = False) -> pd.Series:
+    """Нормализация метрики в [0, 1] для наглядного сравнения."""
+    mn = series.min()
+    mx = series.max()
+    if mx <= mn:
+        return pd.Series(np.ones(len(series)), index=series.index)
+
+    normalized = (series - mn) / (mx - mn)
+    if invert:
+        normalized = 1.0 - normalized
+    return normalized
+
+
+def build_recommendation_table(metrics_df: pd.DataFrame, near_best_ratio: float) -> tuple[pd.DataFrame, int, int]:
+    """Строит нормализованную таблицу и возвращает coarse/fine рекомендации.
+
+    Вместо одного "лучшего" k используем near-best диапазон:
+      - coarse_k: минимальный k среди вариантов, близких к лучшему combined-score
+      - fine_k:   максимальный k среди вариантов, близких к лучшему combined-score
+
+    Это снижает риск автоматически предпочесть большие k только потому,
+    что несколько метрик монотонно улучшаются с ростом детализации.
+    """
+    norm_df = metrics_df.copy()
+    norm_df["sil_norm"] = _minmax_normalize(norm_df["silhouette"])
+    norm_df["ch_norm"] = _minmax_normalize(norm_df["calinski_harabasz"])
+    norm_df["db_norm"] = _minmax_normalize(norm_df["davies_bouldin"], invert=True)
+    norm_df["ami_norm"] = _minmax_normalize(norm_df["ami_miller"])
+    norm_df["nmi_norm"] = _minmax_normalize(norm_df["nmi_miller"])
+
+    norm_df["combined"] = (
+        norm_df["sil_norm"]
+        + norm_df["ch_norm"]
+        + norm_df["db_norm"]
+        + norm_df["ami_norm"]
+        + norm_df["nmi_norm"]
+    ) / 5.0
+
+    best_combined = norm_df["combined"].max()
+    near_best_mask = norm_df["combined"] >= near_best_ratio * best_combined
+    near_best_df = norm_df.loc[near_best_mask].sort_values("k")
+
+    coarse_k = int(near_best_df["k"].min())
+    fine_k = int(near_best_df["k"].max())
+
+    return norm_df, coarse_k, fine_k
 
 
 # ---------------------------------------------------------------------------
@@ -178,27 +233,9 @@ def main(args):
     # 6. Сводная нормализованная таблица
     ax = axes[1, 2]
     ax.axis("off")
-    # Нормализуем метрики для наглядного сравнения
-    norm_df = metrics_df.copy()
-    for col in ["silhouette", "calinski_harabasz", "ami_miller", "nmi_miller"]:
-        mn, mx = norm_df[col].min(), norm_df[col].max()
-        if mx > mn:
-            norm_df[col] = (norm_df[col] - mn) / (mx - mn)
-    for col in ["davies_bouldin"]:
-        mn, mx = norm_df[col].min(), norm_df[col].max()
-        if mx > mn:
-            norm_df[col] = 1.0 - (norm_df[col] - mn) / (mx - mn)  # инвертируем
+    norm_df, coarse_k, fine_k = build_recommendation_table(metrics_df, args.near_best_ratio)
 
-    # Комбинированный скор
-    norm_df["combined"] = (
-        norm_df["silhouette"]
-        + norm_df["calinski_harabasz"]
-        + norm_df["davies_bouldin"]
-        + norm_df["ami_miller"]
-        + norm_df["nmi_miller"]
-    ) / 5.0
-
-    table_data = norm_df[["k", "silhouette", "calinski_harabasz", "davies_bouldin", "ami_miller", "combined"]].round(3)
+    table_data = norm_df[["k", "sil_norm", "ch_norm", "db_norm", "ami_norm", "combined"]].round(3)
     table_data.columns = ["k", "Sil↑", "CH↑", "DB↓(inv)", "AMI↑", "Combined"]
 
     table = ax.table(
@@ -211,10 +248,11 @@ def main(args):
     table.set_fontsize(9)
     table.auto_set_column_width(range(len(table_data.columns)))
 
-    # Выделяем лучший k
-    best_idx = norm_df["combined"].idxmax()
-    best_k = int(norm_df.loc[best_idx, "k"])
-    ax.set_title(f"Нормализованные метрики\n(лучший k = {best_k})", fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"Нормализованные метрики\n(coarse={coarse_k}, fine={fine_k}, near-best≥{args.near_best_ratio:.0%})",
+        fontsize=12,
+        fontweight="bold",
+    )
 
     plt.suptitle("Оптимизация числа кластеров для SimCLR-эмбеддингов", fontsize=14, fontweight="bold")
     plt.tight_layout()
@@ -225,11 +263,22 @@ def main(args):
     print(f"\nГрафик сохранён: {plot_path}")
 
     # Итоговая рекомендация
+    best_idx = norm_df["combined"].idxmax()
+    best_k = int(norm_df.loc[best_idx, "k"])
+    near_best_df = norm_df.loc[norm_df["combined"] >= args.near_best_ratio * norm_df["combined"].max()].sort_values("k")
+
     print(f"\n{'='*60}")
-    print(f"РЕКОМЕНДАЦИЯ: оптимальное число кластеров k = {best_k}")
-    print(f"  Комбинированный нормализованный скор: {norm_df.loc[best_idx, 'combined']:.3f}")
-    print(f"  Silhouette = {metrics_df.loc[best_idx, 'silhouette']:.4f}")
-    print(f"  AMI (vs Miller) = {metrics_df.loc[best_idx, 'ami_miller']:.4f}")
+    print("РЕКОМЕНДАЦИЯ: не использовать один 'оптимальный' k как абсолютную истину")
+    print(f"  Формальный максимум combined-score: k = {best_k}  (score={norm_df.loc[best_idx, 'combined']:.3f})")
+    print(
+        f"  Near-best диапазон (>= {args.near_best_ratio:.0%} от max combined): "
+        f"k = {int(near_best_df['k'].min())}..{int(near_best_df['k'].max())}"
+    )
+    print(f"  Coarse candidate: k = {coarse_k}")
+    print(f"  Fine candidate:   k = {fine_k}")
+    print("  Интерпретация:")
+    print("    - coarse candidate: минимальная разумная детализация без лишнего дробления")
+    print("    - fine candidate:   более физически детализированная сегментация поверхности")
     print(f"{'='*60}")
 
 
@@ -249,13 +298,19 @@ if __name__ == "__main__":
         "--k_range",
         type=int,
         nargs="+",
-        default=[3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20],
+        default=[3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50],
     )
     parser.add_argument(
         "--tol",
         type=float,
         default=6.0,
         help="Допуск для классификации Миллера (градусы)",
+    )
+    parser.add_argument(
+        "--near_best_ratio",
+        type=float,
+        default=0.95,
+        help="Порог near-best диапазона относительно максимального combined-score",
     )
 
     args = parser.parse_args()
