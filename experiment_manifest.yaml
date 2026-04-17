@@ -56,7 +56,8 @@ crystal:
       conv1: "Conv2d(5, 64, kernel_size=3, stride=1, padding=1)"  # was 7×7 stride=2
       maxpool: "nn.Identity()"                                      # removed for 32×32 input
     encoder_dim: 512
-    projection_head: "Linear(512→512, BN, ReLU) → Linear(512→128, BN)"
+    projection_head: "src.models.heads.SimCLRProjectionHead (v2, BN enabled)"
+    projection_head_structure: "Linear(512→512, bias=False) → BN → ReLU → Linear(512→128, bias=False) → BN"
     output_dim: 128
     total_parameters: "~11.2M"
 
@@ -200,7 +201,12 @@ sem:
       script: "src/models/deep_clustering/train.py"
       model_script: "src/models/deep_clustering/model.py"
       backbone: "ResNet50 (pretrained ImageNet V2)"
-      projection_head: "Linear(2048→2048, ReLU) → Linear(2048→128)"
+      projection_head: "src.models.heads.SimCLRProjectionHead (v2, BN enabled, unified with Crystal)"
+      projection_head_structure: "Linear(2048→2048, bias=False) → BN → ReLU → Linear(2048→128, bias=False) → BN"
+      projection_head_legacy_note: >
+        Legacy SEM checkpoints were trained with v1 head (no BN). They are still
+        loadable via SimCLR.from_state_dict, which auto-detects v1/v2 based on
+        presence of BN running_mean/running_var keys in state_dict.
       output_dim: 128
       loss: "NTXentLoss"
       optimizer: "Adam"
@@ -255,6 +261,22 @@ sem:
   evaluation:
     unified_script: "src/evaluation/run_sem_evaluation.py"
     shared_utils: "src/evaluation/eval_utils.py"
+
+    linear_probe:
+      script: "src/evaluation/linear_probe.py"
+      protocol: "stratified K-fold (default K=5) logistic regression on frozen embeddings"
+      ground_truth: "data/sft_annotations.csv (187 labels across 8 morphological clusters)"
+      models_compared: ["Baseline (ImageNet)", "SimCLR (30 ep)", "BYOL (30 ep)"]
+      preprocessing: "L2-normalize + StandardScaler fit on train fold"
+      classifier: "sklearn.linear_model.LogisticRegression (C=10, lbfgs)"
+      metrics: ["accuracy", "balanced_accuracy", "macro_f1"]
+      rationale: >
+        Without linear probe, comparison of Baseline / SimCLR / BYOL relies
+        only on intrinsic clustering metrics (Silhouette, CH, DB) and
+        cross-scale retrieval precision. Intrinsic metrics don't answer the
+        key question: does the model distinguish the classes an expert
+        cares about? Linear probe closes this gap using the already-existing
+        manual SFT labels.
 
     cross_scale_retrieval:
       script: "src/evaluation/cross_scale_retrieval.py"
@@ -314,15 +336,19 @@ reproducibility:
     extract_crystal_embeddings.py auto-detects both formats.
 
   sem_data_contract: >
-    Each SEM embedding file has a companion names file mapping row index → tile_name:
+    Each SEM embedding file has a companion names file mapping row index -> tile_name:
       - Baseline: data/embeddings/embedding_names.csv
       - SimCLR:   data/embeddings/simclr/finetuned_embedding_names.csv
       - BYOL:     data/embeddings/byol/finetuned_embedding_names.csv
     eval_utils.load_aligned_data() uses the model-specific names file to merge
     with tiles_metadata.csv via inner join on tile_name, ensuring strict alignment.
     If a model-specific names file is missing, it falls back to the root
-    embedding_names.csv with a UserWarning. If names count != embeddings count,
-    it falls back to raw metadata index alignment (only when metadata row count
-    matches embeddings count exactly) with another UserWarning.
-    IMPORTANT: embedding_names.csv is currently stale (24183 rows vs 22791
-    embeddings). After re-extracting embeddings, update embedding_names.csv.
+    embedding_names.csv with a UserWarning.
+    If names count != embeddings count, load_aligned_data raises ValueError
+    by default (hard fail). Callers that explicitly know the row order matches
+    may pass allow_fallback=True to opt into the previous index-aligned behavior,
+    which emits a loud "OPAQUE" warning. This prevents silent label bugs from
+    stale names files.
+    If embedding_names.csv becomes stale, run:
+      python3 scripts/regenerate_embedding_names.py --all
+    to rebuild all three files from the current tiles_metadata.csv.

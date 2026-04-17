@@ -38,6 +38,7 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.crystal.miller_utils import assign_miller_labels, FAMILY_NAMES
 from src.utils.repro import set_global_seed
+from src.utils.stats import bootstrap_metric_ci
 
 
 # ---------------------------------------------------------------------------
@@ -166,47 +167,8 @@ def run_crystal_retrieval(
 # ---------------------------------------------------------------------------
 # Bootstrap confidence intervals
 # ---------------------------------------------------------------------------
-
-def bootstrap_metric_ci(
-    values: np.ndarray,
-    n_bootstrap: int = 1000,
-    confidence: float = 0.95,
-    seed: int = 42,
-) -> tuple[float, float, float]:
-    """95% percentile bootstrap CI для среднего по выборке query-атомов.
-
-    Без CI сравнение «precision@K_miller у k=35 и k=50 практически одинаков»
-    остаётся голословным: неизвестно, Δ = 0.002 ± 0.01 (неразличимо) или
-    Δ = 0.002 ± 0.0001 (отличимо, но мало). CI превращает голословность
-    в статистически строгое утверждение.
-
-    Метод: percentile bootstrap (Efron 1979) — повторное выборочное
-    усреднение с возвращением. Это стандартный способ для метрик retrieval
-    при отсутствии параметрических предположений о распределении.
-
-    Аргументы:
-        values: np.ndarray формы (N,) с per-query метриками (precision@K).
-        n_bootstrap: число bootstrap-итераций (1000 — минимум для 95% CI).
-        confidence: уровень доверия (0.95 по умолчанию).
-        seed: фиксация RNG для воспроизводимости CI.
-
-    Возвращает:
-        (mean, lo, hi) — точечная оценка и границы percentile CI.
-    """
-    if len(values) == 0:
-        return (float("nan"), float("nan"), float("nan"))
-
-    rng = np.random.default_rng(seed)
-    n = len(values)
-    boot_means = np.empty(n_bootstrap, dtype=np.float64)
-    for i in range(n_bootstrap):
-        idx = rng.integers(0, n, size=n)
-        boot_means[i] = values[idx].mean()
-
-    alpha = 1.0 - confidence
-    lo = float(np.percentile(boot_means, 100.0 * alpha / 2.0))
-    hi = float(np.percentile(boot_means, 100.0 * (1.0 - alpha / 2.0)))
-    return (float(values.mean()), lo, hi)
+# `bootstrap_metric_ci` вынесен в src/utils/stats.py (используется также
+# в cross_scale_retrieval, linear_probe, knn_probe). Здесь только wrapper.
 
 
 def compute_bootstrap_summary(

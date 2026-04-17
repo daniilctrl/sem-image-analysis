@@ -210,7 +210,7 @@ class TestSEMData:
             assert col in df.columns, f"Missing column '{col}' after baseline alignment"
 
     def test_simclr_names_file_if_present(self):
-        """SimCLR names contract: exact match if file exists, fallback otherwise."""
+        """SimCLR names contract: exact row count match if file exists."""
         simclr_path = ROOT / "data" / "embeddings" / "simclr" / "finetuned_embeddings.npy"
         names_path = ROOT / "data" / "embeddings" / "simclr" / "finetuned_embedding_names.csv"
         if not simclr_path.exists():
@@ -221,19 +221,16 @@ class TestSEMData:
             n_names = _count_csv_rows(names_path)
             assert n_emb == n_names, f"SimCLR embeddings ({n_emb}) != names rows ({n_names})"
         else:
-            import warnings
-            from src.evaluation.eval_utils import load_aligned_data
-
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                emb, df = load_aligned_data("SimCLR (30 ep)")
-            assert len(emb) == len(df), f"aligned SimCLR mismatch: {len(emb)} != {len(df)}"
-            assert any("Falling back" in str(w.message) for w in caught), (
-                "Expected fallback warning when SimCLR names file is missing"
+            # Missing model-specific names file is an error unless root fallback
+            # file exists AND has matching row count. We don't assert fallback
+            # behaviour — it's an explicit opt-in now (allow_fallback=True).
+            raise unittest.SkipTest(
+                "SimCLR names file missing; run "
+                "scripts/regenerate_embedding_names.py to refresh."
             )
 
     def test_byol_names_file_if_present(self):
-        """BYOL names contract: exact match if file exists, fallback otherwise."""
+        """BYOL names contract: exact row count match if file exists."""
         byol_path = ROOT / "data" / "embeddings" / "byol" / "finetuned_embeddings.npy"
         names_path = ROOT / "data" / "embeddings" / "byol" / "finetuned_embedding_names.csv"
         if not byol_path.exists():
@@ -244,15 +241,9 @@ class TestSEMData:
             n_names = _count_csv_rows(names_path)
             assert n_emb == n_names, f"BYOL embeddings ({n_emb}) != names rows ({n_names})"
         else:
-            import warnings
-            from src.evaluation.eval_utils import load_aligned_data
-
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                emb, df = load_aligned_data("BYOL (30 ep)")
-            assert len(emb) == len(df), f"aligned BYOL mismatch: {len(emb)} != {len(df)}"
-            assert any("Falling back" in str(w.message) for w in caught), (
-                "Expected fallback warning when BYOL names file is missing"
+            raise unittest.SkipTest(
+                "BYOL names file missing; run "
+                "scripts/regenerate_embedding_names.py to refresh."
             )
 
     def test_load_aligned_data_simclr_if_present(self):
@@ -302,6 +293,7 @@ class TestModuleSyntax:
         "src/crystal/analyze_miller_indices.py",
         "src/crystal/miller_utils.py",
         "src/crystal/retrieve_crystal.py",
+        "src/models/heads.py",
         "src/models/deep_clustering/model.py",
         "src/models/deep_clustering/train.py",
         "src/models/deep_clustering/train_byol.py",
@@ -313,9 +305,16 @@ class TestModuleSyntax:
         "src/evaluation/scale_invariance_metrics.py",
         "src/evaluation/run_sem_evaluation.py",
         "src/evaluation/evaluate_sic_clustering.py",
+        "src/evaluation/linear_probe.py",
+        "src/evaluation/knn_probe.py",
         "src/data/annotate_tiles.py",
         "src/data/sft_sampler.py",
         "src/data/generate_sft_labels.py",
+        "src/utils/repro.py",
+        "src/utils/stats.py",
+        "scripts/predict_k_theory.py",
+        "scripts/regenerate_embedding_names.py",
+        "scripts/run_sweep.py",
     ]
 
     def test_all_modules_parse(self):
@@ -333,7 +332,35 @@ class TestModuleSyntax:
 
 
 # ============================================================
-# 5. Miller Utils Unit Tests
+# 5. Sweep Config Sanity
+# ============================================================
+
+class TestSweepConfig:
+    """Sanity check: default SEM sweep config parses and has expected shape."""
+
+    sweep_path = ROOT / "configs" / "sweeps" / "sem_default.yaml"
+
+    def test_sweep_file_exists(self):
+        assert self.sweep_path.exists(), f"Missing: {self.sweep_path}"
+
+    def test_sweep_is_valid_yaml(self):
+        try:
+            import yaml
+        except ImportError:
+            raise unittest.SkipTest("pyyaml not installed")
+        cfg = yaml.safe_load(self.sweep_path.read_text())
+        assert "experiments" in cfg, "sweep config must define 'experiments'"
+        assert len(cfg["experiments"]) > 0, "sweep must contain at least one experiment"
+        for exp in cfg["experiments"]:
+            assert "name" in exp, f"experiment missing 'name': {exp}"
+            assert "type" in exp, f"experiment missing 'type': {exp}"
+            assert exp["type"] in {"simclr", "byol"}, (
+                f"unknown type {exp['type']!r} in {exp['name']}"
+            )
+
+
+# ============================================================
+# 6. Miller Utils Unit Tests
 # ============================================================
 
 class TestMillerUtils:
@@ -394,7 +421,7 @@ if __name__ == "__main__":
 
     test_classes = [
         TestCrystalData, TestCrystalEmbeddings, TestSEMData,
-        TestModuleSyntax, TestMillerUtils,
+        TestModuleSyntax, TestSweepConfig, TestMillerUtils,
     ]
 
     passed = 0

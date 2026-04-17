@@ -71,6 +71,19 @@ experiment_manifest.yaml      # Full hyperparameters, seeds, paths, versions
 ## Быстрый старт
 
 ```bash
+# Core install (train + extract + evaluate):
+pip install -e .
+
+# С визуализациями (UMAP, seaborn, plotly, gradio):
+pip install -e ".[viz]"
+
+# С подготовкой данных (opencv, tifffile, openpyxl, h5py):
+pip install -e ".[dataprep]"
+
+# Всё сразу:
+pip install -e ".[all,dev]"
+
+# Legacy путь (эквивалентно pip install -e . без extras):
 pip install -r requirements.txt
 
 # Smoke-check тесты
@@ -113,3 +126,7 @@ python src/evaluation/run_sem_evaluation.py \
 **Bootstrap CI для retrieval**: `retrieve_crystal.py --bootstrap` выдаёт 95%-доверительный интервал для `precision@K_miller` (1000 итераций). Делает сравнение разных k статистически строгим.
 
 **Глобальные seeds**: `src/utils/repro.set_global_seed(42)` фиксирует `torch`, `numpy`, `random`, `cudnn` — вызывается в начале всех train/extract скриптов.
+
+**Унифицированный projection head**: `src/models/heads.SimCLRProjectionHead` — единая реализация для SEM SimCLR и Crystal SimCLR. По умолчанию SimCLR v2 (с BN). Legacy SEM-чекпоинты (v1 без BN) загружаются через `SimCLR.from_state_dict` с auto-detect.
+
+**Linear probe на ручной разметке SFT**: `src/evaluation/linear_probe.py` — supervised evaluation фиксированных эмбеддингов на `data/sft_annotations.csv` (187 меток, 8 морфологических классов). Closes intrinsic-metrics gap при сравнении Baseline / SimCLR / BYOL.
