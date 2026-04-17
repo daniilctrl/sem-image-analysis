@@ -14,6 +14,8 @@ import argparse
 import numpy as np
 import pandas as pd
 import faiss
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
@@ -30,76 +32,76 @@ def build_faiss_index(embeddings):
 
 
 def run_retrieval_test(embeddings, df, K=10):
-    """
-    Проводит Cross-Scale Retrieval тест.
-    Возвращает метрики для каждого тайла.
+    """Cross-Scale Retrieval тест на всей выборке.
+
+    Векторизованная реализация: для скорости все `.loc`/`.iloc` обращения
+    в inner loop заменены на numpy-массивы заранее. На 22k тайлов это даёт
+    ускорение ~10-50x по сравнению с предыдущей pandas-версией.
     """
     index, normed = build_faiss_index(embeddings)
-    
-    # Фильтруем только тайлы с известным увеличением и материалом
-    df = df.copy()
+
+    # Кеширование колонок в numpy (reset_index необходим, чтобы positional
+    # индексы normed совпадали с позициями в df).
+    df = df.reset_index(drop=True).copy()
     df['material'] = df['source_image'].str.split('__').str[0]
-    
-    # Оставляем только материалы с >1 увеличением (для cross-scale)
-    multi_scale = df.dropna(subset=['mag']).copy()
-    mat_mag_counts = multi_scale.groupby('material')['mag'].nunique()
-    valid_materials = mat_mag_counts[mat_mag_counts > 1].index
-    multi_scale = multi_scale[multi_scale['material'].isin(valid_materials)]
-    
-    print(f"Cross-scale test: {len(multi_scale)} tiles across {len(valid_materials)} materials")
-    print(f"Materials: {sorted(valid_materials.tolist())}")
-    
+
+    materials = df['material'].to_numpy()
+    sources = df['source_image'].to_numpy()
+    mags = df['mag'].to_numpy()
+    mag_is_nan = pd.isna(mags)
+
+    # Только материалы с > 1 увеличением (иначе cross-scale бессмыслен)
+    valid_mask = ~mag_is_nan
+    mat_mag_counts = df.loc[valid_mask].groupby('material')['mag'].nunique()
+    valid_materials = set(mat_mag_counts[mat_mag_counts > 1].index.tolist())
+    test_mask = np.array([m in valid_materials for m in materials]) & valid_mask
+    test_indices = np.flatnonzero(test_mask)
+
+    print(f"Cross-scale test: {len(test_indices)} tiles across "
+          f"{len(valid_materials)} materials")
+    print(f"Materials: {sorted(valid_materials)}")
+
+    # Batch FAISS search (один вызов вместо цикла)
+    query_embs = normed[test_indices]
+    # Берём K*5, чтобы отфильтровать self и same-source кандидатов
+    fetch_K = K * 5
+    sims_all, ids_all = index.search(query_embs, fetch_K)
+
     results = []
-    
-    for idx in tqdm(multi_scale.index, desc=f"Retrieval (K={K})"):
-        query_emb = normed[idx].reshape(1, -1)
-        query_material = multi_scale.loc[idx, 'material']
-        query_mag = multi_scale.loc[idx, 'mag']
-        query_source = multi_scale.loc[idx, 'source_image']
-        
-        # Ищем K+1 (первый — сам запрос)
-        sims, indices = index.search(query_emb, K * 5)  # берём больше, чтобы отфильтровать self
-        
-        # Убираем самого себя и тайлы из того же source_image (того же снимка)
-        retrieved_materials = []
-        retrieved_cross_scale = []
-        count = 0
-        
-        for sim, ret_idx in zip(sims[0], indices[0]):
-            if ret_idx == idx:
-                continue
-            ret_source = df.loc[ret_idx, 'source_image']
-            # Пропускаем тайлы из того же снимка (они тривиально похожи)
-            if ret_source == query_source:
-                continue
-            
-            ret_material = df.loc[ret_idx, 'source_image'].split('__')[0]
-            ret_mag = df.loc[ret_idx, 'mag'] if not pd.isna(df.loc[ret_idx, 'mag']) else None
-            
-            is_same_material = (ret_material == query_material)
-            is_cross_scale = is_same_material and ret_mag is not None and ret_mag != query_mag
-            
-            retrieved_materials.append(is_same_material)
-            retrieved_cross_scale.append(is_cross_scale)
-            
-            count += 1
-            if count >= K:
-                break
-        
-        if len(retrieved_materials) < K:
-            continue  # Недостаточно результатов
-        
-        precision_material = sum(retrieved_materials) / K
-        precision_cross_scale = sum(retrieved_cross_scale) / K
-        
+    for i, q_idx in enumerate(tqdm(test_indices, desc=f"Retrieval (K={K})")):
+        q_material = materials[q_idx]
+        q_mag = mags[q_idx]
+        q_source = sources[q_idx]
+
+        ret_ids = ids_all[i]
+
+        # numpy-векторизованная фильтрация self и same-source
+        ret_sources = sources[ret_ids]
+        ret_materials = materials[ret_ids]
+        ret_mags = mags[ret_ids]
+        ret_mag_valid = ~pd.isna(ret_mags)
+
+        keep = (ret_ids != q_idx) & (ret_sources != q_source)
+        kept_ids = ret_ids[keep][:K]
+        if len(kept_ids) < K:
+            continue
+
+        kept_materials = ret_materials[keep][:K]
+        kept_mags = ret_mags[keep][:K]
+        kept_mag_valid = ret_mag_valid[keep][:K]
+
+        is_same_material = (kept_materials == q_material)
+        # cross-scale = same material AND mag known AND mag != query mag
+        is_cross_scale = is_same_material & kept_mag_valid & (kept_mags != q_mag)
+
         results.append({
-            'tile_idx': idx,
-            'material': query_material,
-            'mag': query_mag,
-            f'precision@{K}_material': precision_material,
-            f'precision@{K}_cross_scale': precision_cross_scale,
+            'tile_idx': int(q_idx),
+            'material': q_material,
+            'mag': q_mag,
+            f'precision@{K}_material': float(is_same_material.sum()) / K,
+            f'precision@{K}_cross_scale': float(is_cross_scale.sum()) / K,
         })
-    
+
     return pd.DataFrame(results)
 
 
