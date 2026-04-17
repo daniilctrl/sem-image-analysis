@@ -139,12 +139,23 @@ def main(args):
 
     # 3. Load model with trained weights
     print(f"\nLoading {args.model_type.upper()} checkpoint: {args.checkpoint}")
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    # Поддержка обоих форматов: полный dict (new) и raw state_dict (legacy)
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+    else:
+        state_dict = checkpoint
+
     if args.model_type == "byol":
         model = BYOL(base_model="resnet50").to(device)
+        model.load_state_dict(state_dict)
     else:
-        model = SimCLR(base_model="resnet50", out_dim=128).to(device)
-    state_dict = torch.load(args.checkpoint, map_location=device, weights_only=True)
-    model.load_state_dict(state_dict)
+        # Factory: auto-detect v1/v2 projection head by BN keys in state_dict.
+        # Это позволяет загружать legacy SEM-чекпоинты (v1, без BN) на новом коде.
+        model = SimCLR.from_state_dict(
+            state_dict, base_model="resnet50", out_dim=128,
+        ).to(device)
+        print(f"  Detected projection head version: {model.head_version}")
     print("Model loaded successfully!")
 
     # 4. Extract embeddings
