@@ -311,6 +311,7 @@ class TestModuleSyntax:
         "src/utils/stats.py",
         "scripts/predict_k_theory.py",
         "scripts/regenerate_embedding_names.py",
+        "scripts/run_sweep.py",
     ]
 
     def test_all_modules_parse(self):
@@ -328,7 +329,35 @@ class TestModuleSyntax:
 
 
 # ============================================================
-# 5. Miller Utils Unit Tests
+# 5. Sweep Config Sanity
+# ============================================================
+
+class TestSweepConfig:
+    """Sanity check: default SEM sweep config parses and has expected shape."""
+
+    sweep_path = ROOT / "configs" / "sweeps" / "sem_default.yaml"
+
+    def test_sweep_file_exists(self):
+        assert self.sweep_path.exists(), f"Missing: {self.sweep_path}"
+
+    def test_sweep_is_valid_yaml(self):
+        try:
+            import yaml
+        except ImportError:
+            raise unittest.SkipTest("pyyaml not installed")
+        cfg = yaml.safe_load(self.sweep_path.read_text())
+        assert "experiments" in cfg, "sweep config must define 'experiments'"
+        assert len(cfg["experiments"]) > 0, "sweep must contain at least one experiment"
+        for exp in cfg["experiments"]:
+            assert "name" in exp, f"experiment missing 'name': {exp}"
+            assert "type" in exp, f"experiment missing 'type': {exp}"
+            assert exp["type"] in {"simclr", "byol"}, (
+                f"unknown type {exp['type']!r} in {exp['name']}"
+            )
+
+
+# ============================================================
+# 6. Miller Utils Unit Tests
 # ============================================================
 
 class TestMillerUtils:
@@ -389,7 +418,7 @@ if __name__ == "__main__":
 
     test_classes = [
         TestCrystalData, TestCrystalEmbeddings, TestSEMData,
-        TestModuleSyntax, TestMillerUtils,
+        TestModuleSyntax, TestSweepConfig, TestMillerUtils,
     ]
 
     passed = 0
