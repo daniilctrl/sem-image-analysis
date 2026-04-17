@@ -9,7 +9,9 @@ from tqdm import tqdm
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
-from src.models.deep_clustering.augmentations import get_simclr_transforms
+from src.models.deep_clustering.augmentations import (
+    get_simclr_transforms, add_augmentation_args, make_config_from_args,
+)
 from src.models.deep_clustering.dataset import ContrastiveLearningDataset
 from src.models.deep_clustering.model import SimCLR
 from src.models.deep_clustering.loss import NTXentLoss
@@ -72,7 +74,9 @@ def train(args):
         df_train = df.reset_index(drop=True)
         df_val = None
 
-    transforms = get_simclr_transforms(input_size=224)
+    aug_config = make_config_from_args(args)
+    transforms = get_simclr_transforms(config=aug_config)
+    print(f"Augmentation config: {aug_config.to_dict()}")
     dataset = ContrastiveLearningDataset(df_train, args.data_dir, transforms)
 
     loader = DataLoader(
@@ -272,6 +276,8 @@ if __name__ == "__main__":
     parser.add_argument("--tb_log_dir", type=str, default="",
                         help="TensorBoard log dir. Empty string = no logging. "
                              "In Colab: pass '/content/drive/MyDrive/diploma_logs/simclr_v1'.")
+
+    add_augmentation_args(parser)
 
     args = parser.parse_args()
     train(args)

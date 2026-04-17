@@ -18,7 +18,9 @@ from tqdm import tqdm
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
-from src.models.deep_clustering.augmentations import get_simclr_transforms
+from src.models.deep_clustering.augmentations import (
+    get_simclr_transforms, add_augmentation_args, make_config_from_args,
+)
 from src.models.deep_clustering.dataset import ContrastiveLearningDataset
 from src.models.deep_clustering.model_byol import BYOL, byol_loss
 from src.utils.repro import set_global_seed, seed_worker, make_generator
@@ -73,7 +75,9 @@ def train(args):
         df_train = df.reset_index(drop=True)
         df_val = None
 
-    transforms = get_simclr_transforms(input_size=224)
+    aug_config = make_config_from_args(args)
+    transforms = get_simclr_transforms(config=aug_config)
+    print(f"Augmentation config: {aug_config.to_dict()}")
     dataset = ContrastiveLearningDataset(df_train, args.data_dir, transforms)
 
     loader = DataLoader(
@@ -293,6 +297,8 @@ if __name__ == "__main__":
                         help="Fraction of dataset for hold-out val BYOL loss (default: 0)")
     parser.add_argument("--tb_log_dir", type=str, default="",
                         help="TensorBoard log dir. Empty = no logging.")
+
+    add_augmentation_args(parser)
 
     args = parser.parse_args()
     train(args)
