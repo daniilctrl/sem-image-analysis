@@ -11,6 +11,7 @@ Then open http://localhost:8765 in your browser.
 """
 
 import os
+import sys
 import csv
 import json
 import random
@@ -18,6 +19,9 @@ import argparse
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+from src.data.sft_sampler import SftSampler  # noqa: E402
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -135,10 +139,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <h1>🔬 SEM Tile Annotator</h1>
   <div class="stats">
     Размечено: <span id="annotated">0</span> / <span id="total">0</span>
+    (<span id="progress-pct">0%</span>)
     &nbsp;|&nbsp; Осталось: <span id="remaining">0</span>
     &nbsp;|&nbsp; Материал: <span id="material">-</span>
   </div>
   <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+  <div class="stats" style="margin-top:4px; font-size:0.75em;">
+    <span id="strategy-label">strategy: loading...</span>
+  </div>
 
   <div class="main">
     <div class="tile-container">
@@ -160,22 +168,69 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 <script>
 const CLUSTERS = CLUSTERS_JSON;
-let tiles = [];
+const BATCH_SIZE = 50;            // сколько тайлов тянем за раз
+const PREFETCH_THRESHOLD = 10;    // подгружать новую партию когда осталось <= N
+
+let tiles = [];                    // текущий упорядоченный ranked-список
 let currentIdx = 0;
 let annotations = {};
+let history = [];                  // для prev-кнопки
+let serverStats = null;            // {total_good, total_annotated, has_embeddings, ...}
+let fetching = false;              // guard от double-fetch
+
+async function fetchNextBatch() {
+  // Берём следующий ranked-батч от сэмплера.
+  // Уже размеченные тайлы сервер отфильтрует сам (sampler._unannotated_good).
+  if (fetching) return [];
+  fetching = true;
+  try {
+    const resp = await fetch(
+      `/api/next_tiles?batch_size=${BATCH_SIZE}&strategy=hybrid`
+    );
+    const data = await resp.json();
+    const meta = data.meta || {};
+    if (meta.strategy) {
+      document.getElementById('strategy-label').textContent =
+        `strategy: ${meta.strategy}` +
+        (meta.has_embeddings ? ' (embeddings: yes)' : ' (no embeddings)');
+    }
+    return data.tiles || [];
+  } finally {
+    fetching = false;
+  }
+}
+
+async function refreshStats() {
+  try {
+    const resp = await fetch('/api/stats');
+    serverStats = await resp.json();
+    renderStats();
+  } catch (_) { /* ignore */ }
+}
+
+function renderStats() {
+  if (!serverStats) return;
+  document.getElementById('total').textContent = serverStats.total_good;
+  document.getElementById('annotated').textContent = serverStats.total_annotated;
+  document.getElementById('remaining').textContent =
+    serverStats.total_good - serverStats.total_annotated;
+  const pct = serverStats.total_good > 0
+    ? (serverStats.total_annotated / serverStats.total_good * 100).toFixed(2)
+    : 0;
+  document.getElementById('progress').style.width = pct + '%';
+  document.getElementById('progress-pct').textContent = pct + '%';
+}
 
 async function init() {
-  // Load catalog
-  const resp = await fetch('/api/catalog');
-  const data = await resp.json();
-  tiles = data.tiles;
-
-  // Load existing annotations
+  // Существующие разметки
   const annResp = await fetch('/api/annotations');
   const annData = await annResp.json();
   annotations = annData.annotations || {};
 
-  // Build buttons
+  // Первая партия ranked тайлов
+  tiles = await fetchNextBatch();
+
+  // Кнопки кластеров
   const btnContainer = document.getElementById('buttons');
   CLUSTERS.forEach(c => {
     const btn = document.createElement('button');
@@ -186,11 +241,16 @@ async function init() {
     btnContainer.appendChild(btn);
   });
 
-  updateStats();
+  await refreshStats();
   showTile();
 }
 
 function showTile() {
+  if (tiles.length === 0) {
+    document.getElementById('tile-info').textContent = 'Нет тайлов для разметки.';
+    document.getElementById('tile-img').src = '';
+    return;
+  }
   if (currentIdx < 0) currentIdx = 0;
   if (currentIdx >= tiles.length) currentIdx = tiles.length - 1;
 
@@ -201,7 +261,7 @@ function showTile() {
     (annotations[t.filename] ? ` | ✓ ${annotations[t.filename]}` : '');
   document.getElementById('material').textContent = t.material;
 
-  // Show neighbor tiles from same source
+  // Соседи из того же снимка — для контекста
   const ctx = document.getElementById('context-row');
   ctx.innerHTML = '';
   const neighbors = tiles.filter(x => x.source === t.source).slice(0, 8);
@@ -218,49 +278,76 @@ function showTile() {
 async function annotate(clusterId) {
   const t = tiles[currentIdx];
   annotations[t.filename] = clusterId;
+  history.push(currentIdx);
 
-  // Save to server
+  // Сохранить на сервере.
   await fetch('/api/annotate', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({filename: t.filename, cluster: clusterId})
   });
 
-  updateStats();
-  // Move to next unannotated
-  nextUnannotated();
+  // Убрать размеченный тайл из текущего ranked-батча.
+  tiles.splice(currentIdx, 1);
+  if (currentIdx >= tiles.length) currentIdx = tiles.length - 1;
+
+  // Если батч почти пуст — подгрузить следующий.
+  // Ranked-порядок может измениться (uncertainty пересчитывается), поэтому
+  // запрашиваем у сервера свежий ranked set.
+  if (tiles.length <= PREFETCH_THRESHOLD) {
+    const more = await fetchNextBatch();
+    // dedup по filename
+    const seen = new Set(tiles.map(x => x.filename));
+    for (const m of more) {
+      if (!seen.has(m.filename) && !annotations[m.filename]) {
+        tiles.push(m);
+      }
+    }
+  }
+
+  await refreshStats();
+  showTile();
 }
 
-function nextUnannotated() {
+async function prevTile() {
+  // Откат: возвращаемся к последнему размеченному и показываем его.
+  // ВНИМАНИЕ: сервер уже записал аннотацию; чтобы реально откатить —
+  // перерозметка через annotate(newCluster) перепишет запись.
+  if (history.length === 0) return;
+  const lastIdx = history.pop();
+  if (lastIdx < tiles.length) {
+    currentIdx = lastIdx;
+    showTile();
+  }
+}
+
+function skipTile() {
+  if (currentIdx < tiles.length - 1) currentIdx++;
+  showTile();
+}
+
+async function nextUnannotated() {
+  // С ranked-батчем это просто currentIdx++; сервер уже подсовывает
+  // только unannotated. Но на всякий случай пропускаем уже размеченные.
   for (let i = currentIdx + 1; i < tiles.length; i++) {
     if (!annotations[tiles[i].filename]) {
-      currentIdx = i;
-      showTile();
-      return;
+      currentIdx = i; showTile(); return;
     }
   }
-  // Wrap around
-  for (let i = 0; i < currentIdx; i++) {
-    if (!annotations[tiles[i].filename]) {
-      currentIdx = i;
-      showTile();
-      return;
+  // В конце батча — попросим у сервера следующий.
+  const more = await fetchNextBatch();
+  const seen = new Set(tiles.map(x => x.filename));
+  for (const m of more) {
+    if (!seen.has(m.filename) && !annotations[m.filename]) {
+      tiles.push(m);
     }
   }
-  alert('Все тайлы размечены! 🎉');
-}
-
-function prevTile() { currentIdx--; showTile(); }
-function skipTile() { currentIdx++; showTile(); }
-
-function updateStats() {
-  const total = tiles.length;
-  const annotated = Object.keys(annotations).length;
-  document.getElementById('total').textContent = total;
-  document.getElementById('annotated').textContent = annotated;
-  document.getElementById('remaining').textContent = total - annotated;
-  document.getElementById('progress').style.width =
-    total > 0 ? (annotated / total * 100) + '%' : '0%';
+  if (currentIdx + 1 < tiles.length) {
+    currentIdx++;
+    showTile();
+  } else {
+    alert('Все тайлы размечены! 🎉');
+  }
 }
 
 document.addEventListener('keydown', (e) => {
@@ -281,9 +368,12 @@ init();
 class AnnotationHandler(SimpleHTTPRequestHandler):
     """HTTP handler for the annotation tool."""
 
-    def __init__(self, *args, catalog=None, annotations_path=None, **kwargs):
+    def __init__(self, *args, catalog=None, annotations_path=None,
+                 sampler=None, default_strategy="hybrid", **kwargs):
         self.catalog = catalog
         self.annotations_path = annotations_path
+        self.sampler = sampler
+        self.default_strategy = default_strategy
         self._annotations = self._load_annotations()
         super().__init__(*args, **kwargs)
 
@@ -317,14 +407,59 @@ class AnnotationHandler(SimpleHTTPRequestHandler):
             self.wfile.write(html.encode('utf-8'))
 
         elif parsed.path == '/api/catalog':
-            # Return tile catalog (excluding trash)
+            # Legacy endpoint: возвращает весь каталог shuffled.
+            # Сохранён для обратной совместимости; UI предпочитает
+            # /api/next_tiles (smart ordering).
             tiles = [r for r in self.catalog if not r.get('is_trash', False)]
-            # Shuffle to get diverse materials
             random.shuffle(tiles)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps({'tiles': tiles}).encode())
+
+        elif parsed.path == '/api/next_tiles':
+            # Smart ordering endpoint.
+            # Query params: ?batch_size=50&strategy=hybrid
+            q = parse_qs(parsed.query or "")
+            batch_size = int((q.get("batch_size") or ["50"])[0])
+            strategy = (q.get("strategy") or [self.default_strategy])[0]
+
+            if self.sampler is None:
+                # Fallback (sampler failed to init): просто shuffle.
+                tiles = [r for r in self.catalog if not r.get('is_trash', False)]
+                random.shuffle(tiles)
+                tiles = tiles[:batch_size]
+                meta = {"strategy": "random_fallback", "has_embeddings": False}
+            else:
+                tiles = self.sampler.next_batch(
+                    self._annotations, batch_size=batch_size, strategy=strategy,
+                )
+                meta = {
+                    "strategy": strategy,
+                    "has_embeddings": self.sampler._normed is not None,
+                    "n_annotated": len(self._annotations),
+                }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"tiles": tiles, "meta": meta}).encode())
+
+        elif parsed.path == '/api/stats':
+            if self.sampler is not None:
+                stats = self.sampler.stats(self._annotations)
+            else:
+                stats = {
+                    "total_good": sum(1 for r in self.catalog
+                                      if not r.get("is_trash", False)),
+                    "total_annotated": len(self._annotations),
+                    "by_class": {},
+                    "by_material": [],
+                    "has_embeddings": False,
+                }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(stats).encode())
 
         elif parsed.path == '/api/annotations':
             self.send_response(200)
@@ -391,6 +526,15 @@ def load_catalog():
 def main():
     parser = argparse.ArgumentParser(description='SEM Tile Annotation Tool')
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument(
+        '--strategy', type=str, default='hybrid',
+        choices=['random', 'stratified_mat', 'diversity', 'uncertainty', 'hybrid'],
+        help='Default ordering strategy for /api/next_tiles (UI can override).',
+    )
+    parser.add_argument(
+        '--disable_smart_ordering', action='store_true',
+        help='Force random shuffle (disable sampler entirely).',
+    )
     args = parser.parse_args()
 
     catalog = load_catalog()
@@ -398,15 +542,38 @@ def main():
     trash_tiles = [r for r in catalog if r['is_trash']]
 
     print(f"Loaded {len(catalog)} tiles ({len(good_tiles)} good, {len(trash_tiles)} trash)")
+
+    sampler = None
+    if not args.disable_smart_ordering:
+        try:
+            sampler = SftSampler.from_defaults()
+            has_emb = sampler._normed is not None
+            print(
+                f"Smart ordering sampler ready "
+                f"(strategy={args.strategy!r}, embeddings={'YES' if has_emb else 'no'})"
+            )
+            if not has_emb:
+                print(
+                    "  NOTE: baseline embeddings not found — "
+                    "will fallback to stratified_mat (material round-robin). "
+                    "For full diversity/uncertainty sampling, extract baseline "
+                    "embeddings first."
+                )
+        except Exception as e:
+            print(f"WARNING: sampler init failed ({e}); falling back to random shuffle.")
+            sampler = None
+
     print(f"\nStarting annotation server at http://localhost:{args.port}")
     print(f"Annotations will be saved to {ANNOTATIONS_CSV}")
     print(f"Press Ctrl+C to stop.\n")
 
-    def handler_factory(*args, **kwargs):
+    def handler_factory(*handler_args, **kwargs):
         return AnnotationHandler(
-            *args,
+            *handler_args,
             catalog=catalog,
             annotations_path=ANNOTATIONS_CSV,
+            sampler=sampler,
+            default_strategy=args.strategy,
             **kwargs
         )
 
@@ -415,10 +582,9 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nServer stopped.")
-        # Count annotations
         if ANNOTATIONS_CSV.exists():
             with open(ANNOTATIONS_CSV, 'r') as f:
-                count = sum(1 for _ in f) - 1  # minus header
+                count = sum(1 for _ in f) - 1
             print(f"Total annotations saved: {count}")
 
 
