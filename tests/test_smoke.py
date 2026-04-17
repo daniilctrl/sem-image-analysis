@@ -210,7 +210,7 @@ class TestSEMData:
             assert col in df.columns, f"Missing column '{col}' after baseline alignment"
 
     def test_simclr_names_file_if_present(self):
-        """SimCLR names contract: exact match if file exists, fallback otherwise."""
+        """SimCLR names contract: exact row count match if file exists."""
         simclr_path = ROOT / "data" / "embeddings" / "simclr" / "finetuned_embeddings.npy"
         names_path = ROOT / "data" / "embeddings" / "simclr" / "finetuned_embedding_names.csv"
         if not simclr_path.exists():
@@ -221,19 +221,16 @@ class TestSEMData:
             n_names = _count_csv_rows(names_path)
             assert n_emb == n_names, f"SimCLR embeddings ({n_emb}) != names rows ({n_names})"
         else:
-            import warnings
-            from src.evaluation.eval_utils import load_aligned_data
-
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                emb, df = load_aligned_data("SimCLR (30 ep)")
-            assert len(emb) == len(df), f"aligned SimCLR mismatch: {len(emb)} != {len(df)}"
-            assert any("Falling back" in str(w.message) for w in caught), (
-                "Expected fallback warning when SimCLR names file is missing"
+            # Missing model-specific names file is an error unless root fallback
+            # file exists AND has matching row count. We don't assert fallback
+            # behaviour — it's an explicit opt-in now (allow_fallback=True).
+            raise unittest.SkipTest(
+                "SimCLR names file missing; run "
+                "scripts/regenerate_embedding_names.py to refresh."
             )
 
     def test_byol_names_file_if_present(self):
-        """BYOL names contract: exact match if file exists, fallback otherwise."""
+        """BYOL names contract: exact row count match if file exists."""
         byol_path = ROOT / "data" / "embeddings" / "byol" / "finetuned_embeddings.npy"
         names_path = ROOT / "data" / "embeddings" / "byol" / "finetuned_embedding_names.csv"
         if not byol_path.exists():
@@ -244,15 +241,9 @@ class TestSEMData:
             n_names = _count_csv_rows(names_path)
             assert n_emb == n_names, f"BYOL embeddings ({n_emb}) != names rows ({n_names})"
         else:
-            import warnings
-            from src.evaluation.eval_utils import load_aligned_data
-
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                emb, df = load_aligned_data("BYOL (30 ep)")
-            assert len(emb) == len(df), f"aligned BYOL mismatch: {len(emb)} != {len(df)}"
-            assert any("Falling back" in str(w.message) for w in caught), (
-                "Expected fallback warning when BYOL names file is missing"
+            raise unittest.SkipTest(
+                "BYOL names file missing; run "
+                "scripts/regenerate_embedding_names.py to refresh."
             )
 
     def test_load_aligned_data_simclr_if_present(self):
