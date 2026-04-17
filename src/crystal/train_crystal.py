@@ -25,9 +25,13 @@ from src.crystal.dataset_crystal import CrystalPatchDataset
 from src.crystal.augmentations_crystal import get_crystal_transforms
 from src.crystal.model_crystal import CrystalSimCLR
 from src.models.deep_clustering.loss import NTXentLoss
+from src.utils.repro import set_global_seed, seed_worker, make_generator
 
 
 def train(args):
+    used_seed = set_global_seed(args.seed)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Training CrystalSimCLR on {device}...")
 
@@ -47,6 +51,8 @@ def train(args):
         num_workers=args.workers,
         pin_memory=True,
         drop_last=True,
+        worker_init_fn=seed_worker,
+        generator=make_generator(args.seed),
     )
 
     # 2. Model, Loss, Optimizer
@@ -154,5 +160,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument("--start_epoch", type=int, default=0)
     parser.add_argument("--save_every", type=int, default=10)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global seed for reproducibility (torch/numpy/random/cudnn)")
     args = parser.parse_args()
     train(args)

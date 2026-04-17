@@ -23,6 +23,7 @@ import umap
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
 from src.models.deep_clustering.model import SimCLR
 from src.models.deep_clustering.model_byol import BYOL
+from src.utils.repro import set_global_seed
 
 
 class TileDataset(torch.utils.data.Dataset):
@@ -115,6 +116,9 @@ def build_comparison_umap(baseline_emb, simclr_emb, labels, output_path):
 
 
 def main(args):
+    used_seed = set_global_seed(args.seed)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -210,6 +214,8 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--model_type", type=str, default="simclr", choices=["simclr", "byol"],
                         help="Type of model: simclr or byol")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global seed for reproducibility")
 
     args = parser.parse_args()
     main(args)
