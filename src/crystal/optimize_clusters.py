@@ -33,60 +33,9 @@ from sklearn.metrics import (
 )
 
 # ---------------------------------------------------------------------------
-# Аналитическая классификация Миллера (дублируем логику для автономности)
+# Аналитическая классификация Миллера (единый модуль miller_utils.py)
 # ---------------------------------------------------------------------------
-import itertools
-
-
-def _get_symmetry_vectors(indices):
-    h, k, l = indices
-    perms = set(itertools.permutations([h, k, l]))
-    vecs = []
-    for p in perms:
-        for signs in itertools.product([1, -1], repeat=3):
-            vec = np.array([p[0] * signs[0], p[1] * signs[1], p[2] * signs[2]], dtype=float)
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                vecs.append(tuple(vec / norm))
-    return np.unique(vecs, axis=0)
-
-
-_FAMILIES = {
-    "{100}": _get_symmetry_vectors((1, 0, 0)),
-    "{110}": _get_symmetry_vectors((1, 1, 0)),
-    "{111}": _get_symmetry_vectors((1, 1, 1)),
-    "{210}": _get_symmetry_vectors((2, 1, 0)),
-    "{211}": _get_symmetry_vectors((2, 1, 1)),
-    "{221}": _get_symmetry_vectors((2, 2, 1)),
-    "{310}": _get_symmetry_vectors((3, 1, 0)),
-    "{321}": _get_symmetry_vectors((3, 2, 1)),
-    "{411}": _get_symmetry_vectors((4, 1, 1)),
-}
-
-
-def assign_miller_labels(xyz: np.ndarray, tol_deg: float = 6.0) -> np.ndarray:
-    """Возвращает целочисленные метки граней (0..N_families, N_families = Vicinal)."""
-    norms = np.linalg.norm(xyz, axis=1, keepdims=True)
-    valid = norms.flatten() > 0
-    unit = np.zeros_like(xyz)
-    unit[valid] = xyz[valid] / norms[valid]
-
-    family_names = list(_FAMILIES.keys())
-    n_families = len(family_names)
-
-    labels = np.full(len(xyz), n_families, dtype=np.int32)  # по умолчанию = Vicinal
-    best_angles = np.full(len(xyz), np.inf)
-
-    for fi, (fname, ref_vecs) in enumerate(_FAMILIES.items()):
-        dots = np.abs(np.dot(unit, ref_vecs.T))
-        max_dots = np.max(dots, axis=1)
-        angles = np.arccos(np.clip(max_dots, -1.0, 1.0)) * (180.0 / np.pi)
-
-        better = (angles < best_angles) & (angles <= tol_deg)
-        labels[better] = fi
-        best_angles[better] = angles[better]
-
-    return labels, family_names + ["Vicinal/Mixed"]
+from src.crystal.miller_utils import assign_miller_labels
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +55,13 @@ def main(args):
 
     print(f"Загрузка метаданных: {metadata_path}")
     df = pd.read_csv(metadata_path)
+
+    # Валидация: embeddings и metadata должны быть 1-к-1
+    if len(embeddings) != len(df):
+        raise ValueError(
+            f"CRITICAL: embeddings ({len(embeddings)}) != metadata ({len(df)}). "
+            f"Run fix_embeddings_metadata.py or regenerate."
+        )
 
     # Аналитические метки Миллера
     xyz = df[["X", "Y", "Z"]].values

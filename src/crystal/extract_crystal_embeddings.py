@@ -73,8 +73,15 @@ def main(args):
     # 1. Load model
     print(f"Loading checkpoint: {args.checkpoint}")
     model = CrystalSimCLR(in_channels=5, out_dim=128).to(device)
-    state_dict = torch.load(args.checkpoint, map_location=device, weights_only=True)
-    model.load_state_dict(state_dict)
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        epoch_info = checkpoint.get('epoch', '?')
+        loss_info = checkpoint.get('best_loss', checkpoint.get('avg_loss', '?'))
+        print(f"Loaded full checkpoint (epoch={epoch_info}, loss={loss_info})")
+    else:
+        model.load_state_dict(checkpoint)
+        print("Loaded raw state_dict (legacy format)")
     print("Model loaded successfully!")
 
     # 2. Load patches
@@ -101,7 +108,14 @@ def main(args):
     if meta_path.exists():
         meta_df = pd.read_csv(meta_path)
         print(f"\nLoaded metadata: {len(meta_df)} rows")
+        # Валидация: embeddings и metadata должны быть 1-к-1
+        if len(embeddings) != len(meta_df):
+            raise ValueError(
+                f"CRITICAL: embeddings ({len(embeddings)}) != patches_metadata ({len(meta_df)}). "
+                f"Regenerate patches or embeddings to fix this mismatch."
+            )
     else:
+        print(f"\nWARNING: {meta_path} not found, creating stub metadata")
         meta_df = pd.DataFrame({"patch_idx": range(len(embeddings))})
 
     for n_clusters in args.n_clusters:
@@ -119,6 +133,14 @@ def main(args):
     # Сохраняем обновлённые метаданные
     meta_df.to_csv(output_path / "embeddings_metadata.csv", index=False)
     print(f"\nSaved metadata with cluster labels to {output_path / 'embeddings_metadata.csv'}")
+
+    # Финальная проверка целостности артефактов
+    emb_file = output_path / "crystal_embeddings.npy"
+    meta_file = output_path / "embeddings_metadata.csv"
+    n_emb = np.load(emb_file).shape[0]
+    n_meta = len(pd.read_csv(meta_file))
+    assert n_emb == n_meta, f"INTEGRITY CHECK FAILED: {emb_file} ({n_emb}) != {meta_file} ({n_meta})"
+    print(f"Integrity check passed: {n_emb} embeddings == {n_meta} metadata rows")
 
 
 if __name__ == "__main__":

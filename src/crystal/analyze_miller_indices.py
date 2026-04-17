@@ -1,67 +1,12 @@
 import argparse
 from pathlib import Path
-import itertools
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def get_symmetry_vectors(indices):
-    """Генерация всех симметрично-эквивалентных векторов для кубической системы."""
-    h, k, l = indices
-    perms = set(itertools.permutations([h, k, l]))
-    vecs = []
-    for p in perms:
-        for signs in itertools.product([1, -1], repeat=3):
-            vec = np.array([p[0]*signs[0], p[1]*signs[1], p[2]*signs[2]], dtype=float)
-            norm = np.linalg.norm(vec)
-            if norm > 0:
-                vec = vec / norm
-                vecs.append(tuple(vec))
-    # Возвращаем уникальные нормализованные векторы
-    return np.unique(vecs, axis=0)
-
-# Полный набор значимых семейств граней для ОЦК-полусферы
-# (по рис. 3 из: Никифоров, Егоров, Шен, 2009)
-FAMILIES = {
-    "{100}": get_symmetry_vectors((1, 0, 0)),
-    "{110}": get_symmetry_vectors((1, 1, 0)),
-    "{111}": get_symmetry_vectors((1, 1, 1)),
-    "{210}": get_symmetry_vectors((2, 1, 0)),
-    "{211}": get_symmetry_vectors((2, 1, 1)),
-    "{221}": get_symmetry_vectors((2, 2, 1)),
-    "{310}": get_symmetry_vectors((3, 1, 0)),
-    "{321}": get_symmetry_vectors((3, 2, 1)),
-    "{411}": get_symmetry_vectors((4, 1, 1)),
-}
-
-def assign_miller_family(x, y, z, tolerance_deg=6.0):
-    vec = np.array([x, y, z])
-    norm = np.linalg.norm(vec)
-    if norm == 0:
-        return "Vicinal/Mixed"
-    vec = vec / norm
-    
-    best_family_name = "Vicinal/Mixed"
-    min_angle = np.inf
-    
-    for family_name, ref_vecs in FAMILIES.items():
-        # Скалярное произведение с множеством эквивалентных плоскостей семейства
-        dots = np.clip(np.dot(ref_vecs, vec), -1.0, 1.0)
-        # На полусфере учитываем только внешний угол, 
-        # но для общности берем косинус от абсолютного модуля (эквивалентные встречные плоскости)
-        angles = np.arccos(np.abs(dots)) * (180.0 / np.pi) 
-        
-        family_min_angle = np.min(angles)
-        if family_min_angle < min_angle:
-            min_angle = family_min_angle
-            best_family_name = family_name
-            
-    if min_angle <= tolerance_deg:
-        return best_family_name
-    else:
-        return "Vicinal/Mixed"
+from src.crystal.miller_utils import assign_miller_labels, FAMILY_NAMES
 
 def main(args):
     metadata_path = Path(args.embeddings_dir) / "embeddings_metadata.csv"
@@ -72,31 +17,16 @@ def main(args):
     df = pd.read_csv(metadata_path)
     
     print(f"Вычисление индексов Миллера для каждого атома (допуск {args.tol}°)...")
-    # Параллельное применение лучше через numpy, но pandas с векторами быстрее через apply?
-    # Ускорим: преобразуем X,Y,Z в массивы
     xyz = df[['X', 'Y', 'Z']].values
-    norms = np.linalg.norm(xyz, axis=1, keepdims=True)
-    valid_mask = norms.flatten() > 0
-    unit_vecs = np.zeros_like(xyz)
-    unit_vecs[valid_mask] = xyz[valid_mask] / norms[valid_mask]
-    
-    # Эксклюзивная классификация: каждому атому — только ближайшая грань
-    # (исправлено: ранее атом мог быть перезаписан последним подходящим семейством)
-    results = np.full(len(df), "Vicinal/Mixed", dtype=object)
-    best_angles = np.full(len(df), np.inf)
+    miller_labels, family_names = assign_miller_labels(xyz, tol_deg=args.tol)
 
-    for family_name, ref_vecs in FAMILIES.items():
-        dots = np.abs(np.dot(unit_vecs, ref_vecs.T))  # shape (V, N)
-        max_dots = np.max(dots, axis=1)
-        angles = np.arccos(np.clip(max_dots, -1.0, 1.0)) * (180.0 / np.pi)
+    # Преобразуем целочисленные метки в строковые названия семейств
+    df['miller_family'] = [family_names[i] for i in miller_labels]
 
-        # Обновляем только если этот угол меньше предыдущего лучшего И в пределах допуска
-        better_mask = (angles < best_angles) & (angles <= args.tol)
-        results[better_mask] = family_name
-        best_angles[better_mask] = angles[better_mask]
-
-    df['miller_family'] = results
-    df['miller_angle_deg'] = best_angles  # сохраняем для диагностики
+    for i, name in enumerate(family_names):
+        count = (miller_labels == i).sum()
+        if count > 0:
+            print(f"  {name}: {count} ({100 * count / len(df):.1f}%)")
     
     # Кросс-табуляция (Матрица совпадений)
     cluster_col = f"cluster_{args.n_clusters}"
