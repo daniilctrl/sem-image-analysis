@@ -97,8 +97,19 @@ python src/evaluation/run_sem_evaluation.py \
 
 ## Ключевые решения
 
-**k=8 для Crystal кластеров**: обоснование по 4 критериям в `data/crystal/analysis/k_selection_justification.md` (Elbow 2nd derivative, Davies-Bouldin minimum, AMI caveat, physical argument).
+**Near-best диапазон k ∈ [35, 50] для Crystal кластеров (R=50)**: coarse candidate k=35, fine candidate k=50. Подробности — `data/crystal/analysis/k_selection_justification.md`. Согласуется с формулой (5) из [Никифоров и др., 2009]: теоретическое число различимых семейств граней на R=50 составляет ~25–35. Предыдущая рекомендация k=8 отозвана как недооценка.
+
+> **Важно**: рекомендация условна для R = 50 параметров решётки. Модель
+> [Никифоров 2009] формально применима для R ≥ 100, поэтому R=50 —
+> экстраполяция. Универсальность по R проверяется multi-radius ablation
+> (ожидает данные от руководителя).
 
 **L2-нормализация перед KMeans**: все embedding-based операции (FAISS retrieval, KMeans) используют L2-нормализованные эмбеддинги для консистентности.
 
-**Miller classification tolerance**: 6 deg angular tolerance для 9 BCC-семейств, реализована в единственном модуле `miller_utils.py`.
+**Miller classification tolerance**: 6° angular tolerance для **~28 BCC-семейств** (расширено с 9 после анализа рис. 3 статьи руководителя), реализована в единственном модуле `miller_utils.py`.
+
+**Теоретическая оценка k(R) по формуле (5) статьи**: `scripts/predict_k_theory.py` выдаёт ожидаемое число различимых семейств для любого R и window_radius. Используется как априорный ориентир для multi-radius ablation.
+
+**Bootstrap CI для retrieval**: `retrieve_crystal.py --bootstrap` выдаёт 95%-доверительный интервал для `precision@K_miller` (1000 итераций). Делает сравнение разных k статистически строгим.
+
+**Глобальные seeds**: `src/utils/repro.set_global_seed(42)` фиксирует `torch`, `numpy`, `random`, `cudnn` — вызывается в начале всех train/extract скриптов.
