@@ -314,15 +314,19 @@ reproducibility:
     extract_crystal_embeddings.py auto-detects both formats.
 
   sem_data_contract: >
-    Each SEM embedding file has a companion names file mapping row index → tile_name:
+    Each SEM embedding file has a companion names file mapping row index -> tile_name:
       - Baseline: data/embeddings/embedding_names.csv
       - SimCLR:   data/embeddings/simclr/finetuned_embedding_names.csv
       - BYOL:     data/embeddings/byol/finetuned_embedding_names.csv
     eval_utils.load_aligned_data() uses the model-specific names file to merge
     with tiles_metadata.csv via inner join on tile_name, ensuring strict alignment.
     If a model-specific names file is missing, it falls back to the root
-    embedding_names.csv with a UserWarning. If names count != embeddings count,
-    it falls back to raw metadata index alignment (only when metadata row count
-    matches embeddings count exactly) with another UserWarning.
-    IMPORTANT: embedding_names.csv is currently stale (24183 rows vs 22791
-    embeddings). After re-extracting embeddings, update embedding_names.csv.
+    embedding_names.csv with a UserWarning.
+    If names count != embeddings count, load_aligned_data raises ValueError
+    by default (hard fail). Callers that explicitly know the row order matches
+    may pass allow_fallback=True to opt into the previous index-aligned behavior,
+    which emits a loud "OPAQUE" warning. This prevents silent label bugs from
+    stale names files.
+    If embedding_names.csv becomes stale, run:
+      python3 scripts/regenerate_embedding_names.py --all
+    to rebuild all three files from the current tiles_metadata.csv.
