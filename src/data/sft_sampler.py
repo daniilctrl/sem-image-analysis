@@ -358,6 +358,119 @@ class SftSampler:
         result = [self.catalog[int(ci)] for ci in ranked[:batch_size]]
         return result
 
+    # ------------------------------------------------------------------
+    # Label propagation: kNN-based bulk annotation
+    # ------------------------------------------------------------------
+
+    def propose_propagation(
+        self,
+        annotations: dict[str, str],
+        batch_size: int = 30,
+        knn_k: int = 5,
+        min_similarity: float = 0.85,
+        min_agreement: float = 0.6,
+        exclude_classes: Iterable[str] = ("trash",),
+    ) -> list[dict]:
+        """Предлагает batch unlabeled тайлов с predicted class от kNN.
+
+        Для каждого unlabeled тайла:
+          1. Находим top-K ближайших уже размеченных (cosine similarity).
+          2. Требуем, чтобы ближайший имел similarity >= min_similarity.
+          3. Большинство меток top-K (agreement >= min_agreement) становится
+             predicted label, остальные тайлы пропускаются.
+
+        Сортируем предлагаемые тайлы по confidence (max similarity),
+        возвращаем top-batch_size. UI показывает по одному тайлу + predicted
+        class + similarity; user Accept/Reject/Relabel одной клавишей.
+
+        Args:
+            annotations: {filename: cluster} — текущее состояние разметки.
+            batch_size: сколько предложений вернуть.
+            knn_k: число соседей для consensus.
+            min_similarity: минимальная cosine similarity с ближайшим.
+            min_agreement: минимальная доля top-K с predicted label.
+            exclude_classes: классы, которые нельзя пропагировать
+                             (по умолчанию 'trash' — он deliberately diverse).
+
+        Returns:
+            Список dict'ов с полями:
+                tile (dict из catalog), predicted_cluster (str),
+                similarity (float), agreement (float).
+        """
+        if self._normed is None or self.emb_name_to_idx is None:
+            return []
+
+        # Embedding rows размеченных тайлов + параллельный массив меток.
+        annot_rows, annot_labels = [], []
+        excl = set(exclude_classes)
+        for fname, cls in annotations.items():
+            if cls in excl:
+                continue
+            ei = self.emb_name_to_idx.get(fname)
+            if ei is not None:
+                annot_rows.append(ei)
+                annot_labels.append(cls)
+
+        if len(annot_rows) < knn_k:
+            return []
+
+        annot_normed = self._normed[annot_rows]
+        annot_labels_arr = np.asarray(annot_labels)
+
+        # Pool unannotated с embeddings.
+        pool_rows, pool_catalog_idx = [], []
+        for ci in self._unannotated_good(annotations):
+            name = self.catalog[int(ci)]["filename"]
+            ei = self.emb_name_to_idx.get(name)
+            if ei is not None:
+                pool_rows.append(ei)
+                pool_catalog_idx.append(int(ci))
+
+        if not pool_rows:
+            return []
+
+        pool_normed = self._normed[pool_rows]      # (P, D)
+        sim = pool_normed @ annot_normed.T          # (P, A)
+        max_sim = sim.max(axis=1)                   # (P,)
+
+        # Пред-фильтр: только тайлы с близким аннотированным соседом.
+        keep_mask = max_sim >= min_similarity
+        if not keep_mask.any():
+            return []
+
+        # top-K ближайших среди annot для каждого pool-тайла
+        k_eff = min(knn_k, sim.shape[1])
+        topk_idx = np.argpartition(-sim, kth=k_eff - 1, axis=1)[:, :k_eff]
+
+        proposals = []
+        for i in np.where(keep_mask)[0]:
+            nn_labels = annot_labels_arr[topk_idx[i]]
+            vals, counts = np.unique(nn_labels, return_counts=True)
+            top_label_idx = counts.argmax()
+            top_label = str(vals[top_label_idx])
+            agreement = float(counts[top_label_idx] / counts.sum())
+
+            if agreement < min_agreement:
+                continue
+            if top_label in excl:
+                continue
+
+            proposals.append({
+                "tile": self.catalog[pool_catalog_idx[i]],
+                "predicted_cluster": top_label,
+                "similarity": float(max_sim[i]),
+                "agreement": round(agreement, 4),
+                "knn_k": k_eff,
+            })
+
+        # Сортируем по confidence: чем выше similarity и agreement — тем выше
+        # приоритет.
+        proposals.sort(
+            key=lambda p: (p["similarity"], p["agreement"]),
+            reverse=True,
+        )
+        return proposals[:batch_size]
+
     def stats(self, annotations: dict[str, str]) -> dict:
         """Сводка: общий прогресс + покрытие по материалам и классам."""
         good = [self.catalog[int(i)] for i in self.good_idx]

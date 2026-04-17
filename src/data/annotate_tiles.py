@@ -164,6 +164,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <button class="nav-btn" onclick="prevTile()">← Назад (Z)</button>
     <button class="nav-btn" onclick="skipTile()">Пропустить (S)</button>
     <button class="nav-btn" onclick="nextUnannotated()">Следующий без метки (N)</button>
+    <button class="nav-btn" id="propagate-btn" onclick="togglePropagation()">
+      🧠 Label propagation (P)
+    </button>
+  </div>
+  <div id="propagation-panel" style="display:none; margin-top:12px; padding:10px;
+       background:#0f3460; border-radius:8px; max-width:700px; text-align:center;">
+    <div style="font-size:0.8em; color:#a0a0a0; margin-bottom:6px;">
+      Propagation: <span id="prop-info">—</span>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+      <button class="nav-btn" style="background:#1a6b3a; border-color:#4CAF50;"
+              onclick="acceptPropagation()">✓ Принять (A)</button>
+      <button class="nav-btn" style="background:#6b1a1a; border-color:#f44336;"
+              onclick="rejectPropagation()">✗ Пропустить (R)</button>
+      <button class="nav-btn" onclick="togglePropagation()">Выйти (Esc)</button>
+    </div>
+    <div id="prop-remaining" style="font-size:0.75em; color:#777; margin-top:6px;"></div>
   </div>
 
 <script>
@@ -350,11 +367,109 @@ async function nextUnannotated() {
   }
 }
 
+// ─── Label propagation mode ─────────────────────────────────────────
+// После накопления ~10-30 меток можем «размножить» их через kNN в baseline
+// embedding space: для похожих unlabeled тайлов модель предлагает predicted
+// label, пользователь лишь accept/reject.
+let propagationActive = false;
+let propagationQueue = [];       // очередь предложений от /api/propagate
+let propagationCurrent = null;
+
+async function togglePropagation() {
+  if (propagationActive) {
+    propagationActive = false;
+    document.getElementById('propagation-panel').style.display = 'none';
+    // Возвращаем обычные кнопки классов.
+    document.getElementById('buttons').style.pointerEvents = 'auto';
+    return;
+  }
+  // Fetch proposals.
+  const resp = await fetch(
+    '/api/propagate?batch_size=30&knn_k=5&min_similarity=0.85&min_agreement=0.6'
+  );
+  const data = await resp.json();
+  if (!data.meta.has_embeddings) {
+    alert('Label propagation недоступен: baseline embeddings отсутствуют. ' +
+          'Сначала извлеките их через extract_simclr_embeddings.py.');
+    return;
+  }
+  if (!data.proposals || data.proposals.length === 0) {
+    alert('Нет подходящих предложений. Нужно больше разметки или снижение порогов.');
+    return;
+  }
+  propagationQueue = data.proposals;
+  propagationActive = true;
+  document.getElementById('propagation-panel').style.display = 'block';
+  document.getElementById('buttons').style.pointerEvents = 'none';
+  showPropagationProposal();
+}
+
+function showPropagationProposal() {
+  if (propagationQueue.length === 0) {
+    propagationCurrent = null;
+    document.getElementById('prop-info').textContent =
+      'Очередь пуста. Нажмите P, чтобы обновить предложения.';
+    document.getElementById('prop-remaining').textContent = '';
+    return;
+  }
+  propagationCurrent = propagationQueue.shift();
+  const p = propagationCurrent;
+  const cluster = CLUSTERS.find(c => c.id === p.predicted_cluster);
+  const clusterLabel = cluster ? cluster.label : p.predicted_cluster;
+  const color = cluster ? cluster.color : '#888';
+
+  document.getElementById('tile-img').src = '/tiles/' + p.tile.filename;
+  document.getElementById('tile-info').textContent =
+    `${p.tile.filename} | mat=${p.tile.material}`;
+  document.getElementById('material').textContent = p.tile.material;
+  document.getElementById('prop-info').innerHTML =
+    `<span style="color:${color}; font-weight:bold;">${clusterLabel}</span>` +
+    ` · sim=${p.similarity.toFixed(3)} · agreement=${(p.agreement*100).toFixed(0)}%`;
+  document.getElementById('prop-remaining').textContent =
+    `Осталось в очереди: ${propagationQueue.length}`;
+  // Обновляем контекст соседей если source известен
+  const ctx = document.getElementById('context-row');
+  ctx.innerHTML = '';
+}
+
+async function acceptPropagation() {
+  if (!propagationCurrent) return;
+  const p = propagationCurrent;
+  annotations[p.tile.filename] = p.predicted_cluster;
+  await fetch('/api/annotate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      filename: p.tile.filename,
+      cluster: p.predicted_cluster,
+    }),
+  });
+  await refreshStats();
+  showPropagationProposal();
+}
+
+function rejectPropagation() {
+  // Просто пропускаем без записи.
+  showPropagationProposal();
+}
+
 document.addEventListener('keydown', (e) => {
-  const key = e.key;
+  const key = e.key.toLowerCase();
+  if (key === 'escape') {
+    if (propagationActive) togglePropagation();
+    return;
+  }
+  if (propagationActive) {
+    if (key === 'a' || key === 'ф') { acceptPropagation(); return; }
+    if (key === 'r' || key === 'к') { rejectPropagation(); return; }
+    if (key === 'p' || key === 'з') { togglePropagation(); return; }
+    return; // в propagation режиме остальные клавиши игнорируем
+  }
+
   if (key === 'z' || key === 'я') { prevTile(); return; }
   if (key === 's' || key === 'ы') { skipTile(); return; }
   if (key === 'n' || key === 'т') { nextUnannotated(); return; }
+  if (key === 'p' || key === 'з') { togglePropagation(); return; }
   const cluster = CLUSTERS.find(c => c.key === key);
   if (cluster) annotate(cluster.id);
 });
@@ -460,6 +575,46 @@ class AnnotationHandler(SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(stats).encode())
+
+        elif parsed.path == '/api/propagate':
+            # Query params:
+            # ?batch_size=30&knn_k=5&min_similarity=0.85&min_agreement=0.6
+            q = parse_qs(parsed.query or "")
+            batch_size = int((q.get("batch_size") or ["30"])[0])
+            knn_k = int((q.get("knn_k") or ["5"])[0])
+            min_sim = float((q.get("min_similarity") or ["0.85"])[0])
+            min_agr = float((q.get("min_agreement") or ["0.6"])[0])
+
+            if self.sampler is None or self.sampler._normed is None:
+                payload = {
+                    "proposals": [],
+                    "meta": {
+                        "has_embeddings": False,
+                        "reason": "no embeddings — label propagation unavailable",
+                    },
+                }
+            else:
+                proposals = self.sampler.propose_propagation(
+                    self._annotations,
+                    batch_size=batch_size,
+                    knn_k=knn_k,
+                    min_similarity=min_sim,
+                    min_agreement=min_agr,
+                )
+                payload = {
+                    "proposals": proposals,
+                    "meta": {
+                        "has_embeddings": True,
+                        "n_annotated": len(self._annotations),
+                        "min_similarity": min_sim,
+                        "min_agreement": min_agr,
+                        "knn_k": knn_k,
+                    },
+                }
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
 
         elif parsed.path == '/api/annotations':
             self.send_response(200)
