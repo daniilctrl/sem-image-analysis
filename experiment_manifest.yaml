@@ -56,7 +56,8 @@ crystal:
       conv1: "Conv2d(5, 64, kernel_size=3, stride=1, padding=1)"  # was 7×7 stride=2
       maxpool: "nn.Identity()"                                      # removed for 32×32 input
     encoder_dim: 512
-    projection_head: "Linear(512→512, BN, ReLU) → Linear(512→128, BN)"
+    projection_head: "src.models.heads.SimCLRProjectionHead (v2, BN enabled)"
+    projection_head_structure: "Linear(512→512, bias=False) → BN → ReLU → Linear(512→128, bias=False) → BN"
     output_dim: 128
     total_parameters: "~11.2M"
 
@@ -200,7 +201,12 @@ sem:
       script: "src/models/deep_clustering/train.py"
       model_script: "src/models/deep_clustering/model.py"
       backbone: "ResNet50 (pretrained ImageNet V2)"
-      projection_head: "Linear(2048→2048, ReLU) → Linear(2048→128)"
+      projection_head: "src.models.heads.SimCLRProjectionHead (v2, BN enabled, unified with Crystal)"
+      projection_head_structure: "Linear(2048→2048, bias=False) → BN → ReLU → Linear(2048→128, bias=False) → BN"
+      projection_head_legacy_note: >
+        Legacy SEM checkpoints were trained with v1 head (no BN). They are still
+        loadable via SimCLR.from_state_dict, which auto-detects v1/v2 based on
+        presence of BN running_mean/running_var keys in state_dict.
       output_dim: 128
       loss: "NTXentLoss"
       optimizer: "Adam"
