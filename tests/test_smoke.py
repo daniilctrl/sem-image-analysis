@@ -337,33 +337,46 @@ class TestMillerUtils:
     """Test miller_utils.py classification logic."""
 
     def test_import(self):
-        from src.crystal.miller_utils import assign_miller_labels, FAMILY_NAMES
-        assert len(FAMILY_NAMES) == 10  # 9 families + Vicinal/Mixed
+        from src.crystal.miller_utils import FAMILIES, FAMILY_NAMES
+        # После расширения набора по рис. 3 [Никифоров 2009] семейств должно
+        # быть значительно больше, чем в первой итерации (9). Ожидаем ≥ 20,
+        # плюс Vicinal/Mixed в конце FAMILY_NAMES.
+        assert len(FAMILIES) >= 20, f"Expected >=20 Miller families, got {len(FAMILIES)}"
+        assert FAMILY_NAMES[-1] == "Vicinal/Mixed"
+        assert len(FAMILY_NAMES) == len(FAMILIES) + 1
 
-    def test_canonical_vectors(self):
-        """Known Miller index vectors should classify correctly."""
+    def test_canonical_core_families(self):
+        """Core Miller families (100, 110, 111) must classify correctly."""
         import numpy as np
         from src.crystal.miller_utils import assign_miller_labels
 
         vectors = np.array([
-            [1, 0, 0],    # {100}
-            [1, 1, 0],    # {110}
-            [1, 1, 1],    # {111}
-            [0, 0, 1],    # {100}
+            [1, 0, 0],
+            [1, 1, 0],
+            [1, 1, 1],
+            [0, 0, 1],
         ], dtype=np.float64)
 
         labels, names = assign_miller_labels(vectors, tol_deg=6.0)
-        assert names[labels[0]] == "{100}", f"[1,0,0] → {names[labels[0]]}"
-        assert names[labels[1]] == "{110}", f"[1,1,0] → {names[labels[1]]}"
-        assert names[labels[2]] == "{111}", f"[1,1,1] → {names[labels[2]]}"
-        assert names[labels[3]] == "{100}", f"[0,0,1] → {names[labels[3]]}"
+        assert names[labels[0]] == "{100}", f"[1,0,0] -> {names[labels[0]]}"
+        assert names[labels[1]] == "{110}", f"[1,1,0] -> {names[labels[1]]}"
+        assert names[labels[2]] == "{111}", f"[1,1,1] -> {names[labels[2]]}"
+        assert names[labels[3]] == "{100}", f"[0,0,1] -> {names[labels[3]]}"
+
+    def test_extended_families_present(self):
+        """Ensure extended families beyond the initial 9 are registered."""
+        from src.crystal.miller_utils import FAMILIES
+
+        # Семейства, добавленные в расширенной версии по рис. 3 Никифорова 2009:
+        expected_extra = {"{311}", "{331}", "{510}", "{531}", "{521}", "{711}"}
+        missing = expected_extra - set(FAMILIES.keys())
+        assert not missing, f"Missing extended families: {missing}"
 
     def test_vicinal_vector(self):
-        """A vector far from all canonical families → Vicinal/Mixed."""
+        """A vector far from all canonical families -> Vicinal/Mixed."""
         import numpy as np
         from src.crystal.miller_utils import assign_miller_labels
 
-        # Very tight tolerance to force vicinal
         vectors = np.array([[0.7, 0.5, 0.1]])
         labels, names = assign_miller_labels(vectors, tol_deg=1.0)
         assert names[labels[0]] == "Vicinal/Mixed"

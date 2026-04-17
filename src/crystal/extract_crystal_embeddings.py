@@ -26,6 +26,7 @@ from sklearn.cluster import KMeans
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.crystal.dataset_crystal import CrystalInferenceDataset
 from src.crystal.model_crystal import CrystalSimCLR
+from src.utils.repro import set_global_seed
 
 
 def extract_embeddings(model, dataloader, device):
@@ -67,6 +68,9 @@ def compute_metrics(embeddings, labels, label_name="CrystalSimCLR"):
 
 
 def main(args):
+    used_seed = set_global_seed(args.seed)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -154,5 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--n_clusters", type=int, nargs="+", default=[5, 8, 10],
                         help="Number of KMeans clusters to try")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global seed for reproducibility")
     args = parser.parse_args()
     main(args)

@@ -31,9 +31,15 @@
 
 - **149 947** поверхностных патчей (5 каналов, 32×32)
 - **NT-Xent Loss = 1.82** после 50 эпох обучения
-- **k = 8** кластеров — компромиссный выбор (обоснование: `data/crystal/analysis/k_selection_justification.md`); физически обоснованная оценка ~20 зон
-- **9 семейств Миллера** + Vicinal/Mixed — реализованы в `miller_utils.py`
-- **Retrieval**: FAISS cosine similarity, precision@K_miller как внешняя метрика
+- **Near-best диапазон k ∈ [35, 50]** для R=50 (coarse=35, fine=50). Подробности и сопоставление с формулой (5) статьи — `data/crystal/analysis/k_selection_justification.md`. Предыдущая оценка k=8 отозвана.
+- **~28 семейств Миллера** + Vicinal/Mixed — расширено с 9 после анализа рис. 3 статьи руководителя; единственный модуль `miller_utils.py`
+- **Retrieval**: FAISS cosine similarity, `precision@K_miller` с bootstrap 95% CI как внешняя метрика
+- **Теоретический k(R)** по формуле (5) [Никифоров 2009]: `scripts/predict_k_theory.py`
+
+> Все числовые результаты выше относятся к одному радиусу полусферы
+> R = 50 параметров решётки. Универсальность по R ожидает multi-radius
+> ablation (см. `data/crystal/analysis/k_selection_justification.md`,
+> раздел «Открытые вопросы»).
 
 ---
 

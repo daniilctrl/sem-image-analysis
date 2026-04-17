@@ -1,0 +1,5 @@
+R (lattice params),strict (g >= window),medium (g >= window/3),soft (g >= 1 lattice param),very_soft (g >= 0.5)
+50.0,0,4,28,28
+100.0,1,8,28,28
+200.0,2,16,28,28
+316.0,3,27,28,28
