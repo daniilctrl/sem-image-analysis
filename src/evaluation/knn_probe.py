@@ -141,16 +141,20 @@ def run_for_model(
         print(f"  SKIP {model_name}: {e}")
         return None
 
+    # Добавляем индекс строки эмбеддинга ДО merge с аннотациями,
+    # чтобы после inner join можно было точно извлечь подмножество строк.
+    df_aligned = df_aligned.copy()
+    df_aligned["_emb_row"] = np.arange(len(df_aligned))
+
     merged = load_sft_annotations(annotations_path, df_aligned,
                                    exclude_classes=args.exclude_classes)
     if len(merged) < args.n_folds * 2:
         print(f"  SKIP {model_name}: only {len(merged)} annotated tiles")
         return None
 
-    idx_in_aligned = df_aligned.reset_index().merge(
-        merged[["tile_name"]], on="tile_name", how="inner",
-    )["index"].values
-    X = emb[idx_in_aligned]
+    # Извлекаем эмбеддинги для подмножества — через _emb_row,
+    # гарантируя len(X) == len(y).
+    X = emb[merged["_emb_row"].values]
     if args.normalize:
         X = l2_normalize(X)
     y = merged["cluster"].to_numpy()
