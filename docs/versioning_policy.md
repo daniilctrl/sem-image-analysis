@@ -31,4 +31,12 @@
    - параметры запуска,
    - версию кода (commit hash),
    - ссылки/пути на внешний storage с артефактами.
-4. Для переносимости среды поддерживаем актуальный `requirements.txt`.
+4. Для переносимости среды поддерживаем актуальный `pyproject.toml` как
+   источник истины:
+   - `[project].dependencies` — core runtime (train + extract + evaluate),
+   - `[project.optional-dependencies].viz` — UMAP, seaborn, plotly, gradio,
+   - `[project.optional-dependencies].dataprep` — opencv, tifffile, openpyxl, h5py,
+   - `[project.optional-dependencies].reports` — markdown, PyMuPDF,
+   - `[project.optional-dependencies].dev` — pytest, pytest-cov.
+   `requirements.txt` остаётся как удобный shortcut для `pip install -r`,
+   эквивалентный core-набору из pyproject.

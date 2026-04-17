@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diploma-sem-crystal"
+version = "0.1.0"
+description = "Deep learning for inverse search and clustering of nanostructured surface textures (SEM + BCC crystal, bachelor's diploma project)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Daniil Rodionov" },
+]
+license = { text = "MIT" }
+keywords = [
+    "self-supervised-learning",
+    "simclr",
+    "byol",
+    "scanning-electron-microscopy",
+    "crystal-surface",
+    "retrieval",
+    "clustering",
+]
+
+# Core dependencies used by the primary train/extract/evaluate pipeline.
+# Keep this list tight: every entry must be imported somewhere under src/
+# or scripts/ (verified via rg usage).
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.2.0",
+    "scipy>=1.10.0",
+    "Pillow>=9.4.0",
+    "tqdm>=4.65.0",
+    "faiss-cpu>=1.7.4",
+    "matplotlib>=3.7.0",
+    "pyarrow>=12.0.0",
+]
+
+[project.optional-dependencies]
+# Visualization and interactive exploration — used by visualize_crystal,
+# evaluate_sic_clustering (HTML report), and the Gradio retrieval demo.
+viz = [
+    "umap-learn>=0.5.3",
+    "seaborn>=0.12.0",
+    "plotly>=5.15.0",
+    "gradio>=4.0.0",
+]
+
+# Data preparation pipeline for SEM TIFF files. Separated because the main
+# evaluation pipeline operates on already-processed PNG tiles and does not
+# need these heavy imaging libraries.
+dataprep = [
+    "opencv-python>=4.8.0",
+    "tifffile>=2023.7.10",
+    "openpyxl>=3.1.0",    # Excel loader for Crystal coordinates
+    "h5py>=3.8.0",        # used by experiment_multiscale scratch scripts
+]
+
+# HTML / PDF report generators in notebooks/. Not needed for training or
+# evaluation; only for producing the diploma report.
+reports = [
+    "markdown>=3.4.0",
+    "PyMuPDF>=1.23.0",
+]
+
+# Full install with all extras (convenience).
+all = [
+    "umap-learn>=0.5.3",
+    "seaborn>=0.12.0",
+    "plotly>=5.15.0",
+    "gradio>=4.0.0",
+    "opencv-python>=4.8.0",
+    "tifffile>=2023.7.10",
+    "openpyxl>=3.1.0",
+    "h5py>=3.8.0",
+    "markdown>=3.4.0",
+    "PyMuPDF>=1.23.0",
+]
+
+# Developer-only dependencies (tests, linting).
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+exclude = ["tests*", "data*", "notebooks*", "docs*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+]
