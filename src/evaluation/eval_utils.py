@@ -220,4 +220,37 @@ def load_aligned_data(
         warnings.warn(
             f"embedding_names.csv ({len(names_df)}) != embeddings ({len(embeddings)}), "
             f"but len(meta_raw)={len(meta_raw)} matches. Assuming index alignment "
-            f"becaus
+            f"because allow_fallback=True. This is OPAQUE and may silently produce "
+            f"wrong labels if row order of embeddings differs from metadata. "
+            f"Regenerate names file via scripts/regenerate_embedding_names.py.",
+            UserWarning,
+            stacklevel=2,
+        )
+        print(
+            f"  WARNING: using OPAQUE index-alignment fallback "
+            f"(names stale: {len(names_df)} vs {len(embeddings)})."
+        )
+        return embeddings, meta_raw.reset_index(drop=True)
+
+    raise ValueError(
+        f"Alignment failed: len(names)={len(names_df)} != len(embeddings)={len(embeddings)}. "
+        f"meta_raw={len(meta_raw)}, meta_dedup={len(meta_dedup)}. "
+        f"Fix options:\n"
+        f"  1. Regenerate names file: python scripts/regenerate_embedding_names.py\n"
+        f"  2. Re-extract embeddings: python src/models/deep_clustering/extract_simclr_embeddings.py\n"
+        f"  3. If you KNOW row order matches, pass allow_fallback=True (dangerous)."
+    )
+
+
+def l2_normalize(embeddings: np.ndarray) -> np.ndarray:
+    """L2-нормализация эмбеддингов (для KMeans в cosine-пространстве).
+
+    Аргументы:
+        embeddings: (N, D) матрица.
+
+    Возвращает:
+        (N, D) np.ndarray — нормализованные эмбеддинги.
+    """
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    return embeddings / norms
