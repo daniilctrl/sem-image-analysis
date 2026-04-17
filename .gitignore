@@ -3,6 +3,7 @@ data/raw/
 data/processed/
 data/embeddings/
 data/results/
+data/annotations_exports/
 
 # Чекпоинты моделей
 models/checkpoints*/
