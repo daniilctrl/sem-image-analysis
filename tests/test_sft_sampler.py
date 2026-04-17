@@ -160,6 +160,97 @@ def test_sampler_empty_pool_returns_empty():
     assert batch == []
 
 
+def test_propagation_empty_without_embeddings():
+    catalog = _fake_catalog()
+    s = SftSampler(catalog=catalog)  # no embeddings
+    annotations = {f"A_{i:03d}.png": "cls1" for i in range(10)}
+    proposals = s.propose_propagation(annotations, batch_size=10)
+    assert proposals == []
+
+
+def test_propagation_proposes_by_material_cluster():
+    """Тайлы материала A размечены 'cls1', B — 'cls2'. Unlabeled A-тайлы
+    должны получить predicted_cluster='cls1' через kNN в embedding space
+    (где A-тайлы кучнуются рядом благодаря _fake_embeddings)."""
+    catalog = _fake_catalog(n_per_mat=20, mats=["A", "B", "C"])
+    emb, name_to_idx = _fake_embeddings(catalog)
+    s = SftSampler(catalog=catalog, embeddings=emb, emb_name_to_idx=name_to_idx)
+
+    # Размечаем первые 10 тайлов каждого из материалов A и B
+    annotations = {}
+    for i in range(10):
+        annotations[f"A_{i:03d}.png"] = "cls1"
+        annotations[f"B_{i:03d}.png"] = "cls2"
+
+    proposals = s.propose_propagation(
+        annotations, batch_size=20, knn_k=3,
+        min_similarity=0.5, min_agreement=0.5,
+    )
+    assert len(proposals) > 0, "Should propose some unlabeled tiles"
+
+    # Проверяем корректность propagation: A-тайлы → cls1, B-тайлы → cls2
+    for p in proposals:
+        mat = p["tile"]["material"]
+        if mat == "A":
+            assert p["predicted_cluster"] == "cls1", (
+                f"A-tile {p['tile']['filename']} должен быть cls1, "
+                f"получил {p['predicted_cluster']}"
+            )
+        elif mat == "B":
+            assert p["predicted_cluster"] == "cls2"
+
+
+def test_propagation_respects_min_similarity():
+    """Слишком высокий порог similarity должен дать пустой результат."""
+    catalog = _fake_catalog(n_per_mat=15)
+    emb, name_to_idx = _fake_embeddings(catalog)
+    s = SftSampler(catalog=catalog, embeddings=emb, emb_name_to_idx=name_to_idx)
+    annotations = {f"A_{i:03d}.png": "cls1" for i in range(10)}
+    # 0.9999 порог — маловероятно, что любой unlabeled так близок.
+    proposals = s.propose_propagation(
+        annotations, knn_k=3, min_similarity=0.9999, min_agreement=0.5,
+    )
+    assert len(proposals) == 0 or all(p["similarity"] >= 0.9999 for p in proposals)
+
+
+def test_propagation_excludes_trash():
+    """predicted_cluster='trash' никогда не пропагируется."""
+    catalog = _fake_catalog(n_per_mat=15)
+    emb, name_to_idx = _fake_embeddings(catalog)
+    s = SftSampler(catalog=catalog, embeddings=emb, emb_name_to_idx=name_to_idx)
+    annotations = {f"A_{i:03d}.png": "trash" for i in range(10)}
+    proposals = s.propose_propagation(
+        annotations, knn_k=3, min_similarity=0.0, min_agreement=0.5,
+    )
+    for p in proposals:
+        assert p["predicted_cluster"] != "trash"
+
+
+def test_propagation_sorted_by_confidence():
+    """Proposals должны быть отсортированы по убыванию similarity."""
+    catalog = _fake_catalog(n_per_mat=20)
+    emb, name_to_idx = _fake_embeddings(catalog)
+    s = SftSampler(catalog=catalog, embeddings=emb, emb_name_to_idx=name_to_idx)
+    annotations = {f"A_{i:03d}.png": "cls1" for i in range(10)}
+    annotations.update({f"B_{i:03d}.png": "cls2" for i in range(10)})
+    proposals = s.propose_propagation(
+        annotations, batch_size=20, knn_k=3,
+        min_similarity=0.3, min_agreement=0.5,
+    )
+    sims = [p["similarity"] for p in proposals]
+    assert sims == sorted(sims, reverse=True), "Must be sorted by similarity desc"
+
+
+def test_propagation_requires_min_annotations():
+    """Если размеченных меньше knn_k — возвращается пустой список."""
+    catalog = _fake_catalog()
+    emb, name_to_idx = _fake_embeddings(catalog)
+    s = SftSampler(catalog=catalog, embeddings=emb, emb_name_to_idx=name_to_idx)
+    annotations = {"A_000.png": "cls1", "A_001.png": "cls1"}
+    proposals = s.propose_propagation(annotations, knn_k=5)
+    assert proposals == []
+
+
 def test_sampler_unknown_strategy_raises():
     catalog = _fake_catalog()
     s = SftSampler(catalog=catalog)
