@@ -1,21 +1,33 @@
+# Core dependencies for training, extraction, and evaluation pipelines.
+# This file is the source of truth for minimal install:
+#   pip install -r requirements.txt
+#
+# For full install (viz + data prep + reports), prefer pyproject extras:
+#   pip install -e ".[all]"
+#   pip install -e ".[viz]"        # adds umap-learn, seaborn, plotly, gradio
+#   pip install -e ".[dataprep]"   # adds opencv-python, tifffile, openpyxl, h5py
+#   pip install -e ".[reports]"    # adds markdown, PyMuPDF
+#   pip install -e ".[dev]"        # adds pytest, pytest-cov
+#
+# The extras list is defined in pyproject.toml.
+
+# -- ML core (torch + SSL training) --
 torch>=2.0.0
 torchvision>=0.15.0
+
+# -- Scientific stack --
 numpy>=1.24.0
 pandas>=2.0.0
+scikit-learn>=1.2.0
+scipy>=1.10.0
+pyarrow>=12.0.0
+
+# -- Image loading + progress bars --
 Pillow>=9.4.0
 tqdm>=4.65.0
+
+# -- Retrieval (FAISS cosine index) --
 faiss-cpu>=1.7.4
+
+# -- Plotting (only matplotlib is core; seaborn/plotly/umap-learn in [viz]) --
 matplotlib>=3.7.0
-scikit-learn>=1.2.0
-umap-learn>=0.5.3
-scipy>=1.10.0
-openpyxl>=3.1.0
-h5py>=3.8.0
-opencv-python>=4.8.0
-tifffile>=2023.7.10
-plotly>=5.15.0
-seaborn>=0.12.0
-gradio>=4.0.0
-markdown>=3.4.0
-PyMuPDF>=1.23.0
-pyarrow>=12.0.0
