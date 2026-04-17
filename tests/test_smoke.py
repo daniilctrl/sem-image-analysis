@@ -293,6 +293,7 @@ class TestModuleSyntax:
         "src/crystal/analyze_miller_indices.py",
         "src/crystal/miller_utils.py",
         "src/crystal/retrieve_crystal.py",
+        "src/models/heads.py",
         "src/models/deep_clustering/model.py",
         "src/models/deep_clustering/train.py",
         "src/models/deep_clustering/train_byol.py",
@@ -304,6 +305,10 @@ class TestModuleSyntax:
         "src/evaluation/scale_invariance_metrics.py",
         "src/evaluation/run_sem_evaluation.py",
         "src/evaluation/evaluate_sic_clustering.py",
+        "src/evaluation/linear_probe.py",
+        "src/utils/repro.py",
+        "scripts/predict_k_theory.py",
+        "scripts/regenerate_embedding_names.py",
     ]
 
     def test_all_modules_parse(self):
