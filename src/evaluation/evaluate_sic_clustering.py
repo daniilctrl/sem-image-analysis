@@ -59,7 +59,7 @@ def load_data(emb_dir, meta_path):
     
     print(f"   Matched {len(df)} tiles (from {len(names_df)} embeddings, {len(meta_df)} metadata)")
 
-    df['material'] = df['source_image'].str.split('__').str[0]
+    df['material'] = df['source_image'].str.split('__').str[0]  # see also eval_utils.extract_material
     return embeddings, df
 
 
