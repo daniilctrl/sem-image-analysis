@@ -6,6 +6,7 @@
   python train_byol.py --epochs 30 --batch_size 64
   python train_byol.py --resume checkpoint.pth --start_epoch 15 --epochs 15
 """
+import math
 import os
 import argparse
 import pandas as pd
@@ -33,7 +34,7 @@ def train(args):
     # 1. Dataset & Dataloader
     df = pd.read_csv(args.metadata_path)
     if args.subset > 0:
-        df = df.sample(args.subset, random_state=42)
+        df = df.sample(args.subset, random_state=args.seed)
         print(f"Using subset of {args.subset} images.")
 
     transforms = get_simclr_transforms(input_size=224)
@@ -50,7 +51,7 @@ def train(args):
         generator=make_generator(args.seed),
     )
 
-    # 2. Model & Optimizer
+    # 2. Model, Optimizer, Scheduler
     model = BYOL(base_model="resnet50").to(device)
     optimizer = optim.Adam(
         list(model.online_encoder.parameters()) +
@@ -58,21 +59,46 @@ def train(args):
         list(model.online_predictor.parameters()),
         lr=args.learning_rate, weight_decay=1e-4
     )
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=args.epochs, eta_min=1e-6
+    )
 
-    # 2.5 Resume
+    # 2.5 Resume from checkpoint (полный формат)
     start_epoch = args.start_epoch
+    best_loss = float("inf")
     if args.resume:
         print(f"Resuming from: {args.resume}")
-        state = torch.load(args.resume, map_location=device, weights_only=True)
-        model.load_state_dict(state)
-        print(f"Loaded. Continuing from epoch {start_epoch + 1}.")
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+            if "optimizer_state_dict" in checkpoint:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if "scheduler_state_dict" in checkpoint:
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            start_epoch = checkpoint.get("epoch", args.start_epoch) + 1
+            best_loss = checkpoint.get("best_loss", float("inf"))
+            print(
+                f"Restored optimizer + scheduler + online/target weights. "
+                f"Continuing from epoch {start_epoch + 1}."
+            )
+        else:
+            model.load_state_dict(checkpoint)
+            print(
+                "Loaded weights only (legacy state_dict). "
+                "Optimizer state lost; first few steps may be noisy."
+            )
 
     # 3. Training Loop
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     total_epochs = start_epoch + args.epochs
-    print(f"Training from epoch {start_epoch + 1} to {total_epochs}.")
+    steps_per_epoch = len(loader)
+    total_steps = max(total_epochs * steps_per_epoch, 1)
+    print(f"Training from epoch {start_epoch + 1} to {total_epochs} "
+          f"({steps_per_epoch} steps/epoch, {total_steps} total steps).")
+
+    global_step = start_epoch * steps_per_epoch
 
     for epoch in range(start_epoch, total_epochs):
         model.train()
@@ -87,26 +113,64 @@ def train(args):
             # Forward: получаем предсказания Online и проекции Target
             online_p1, online_p2, target_z1, target_z2 = model(view1, view2)
 
-            # BYOL Loss: симметричный (предсказание 1→target 2 + предсказание 2→target 1)
+            # BYOL Loss: симметричный (предсказание 1 -> target 2 + 2 -> 1)
             loss = byol_loss(online_p1, target_z2) + byol_loss(online_p2, target_z1)
 
             loss.backward()
             optimizer.step()
 
-            # EMA обновление Target network
-            model.update_target(tau=args.ema_tau)
+            # EMA tau ramp-up по косинусу: от base -> 1.0 за весь прогон
+            # (Grill et al. 2020, BYOL appendix B).
+            # Константный tau (как раньше) создаёт нестабильность в начале
+            # и избыточную медленность в конце.
+            if args.ema_tau_schedule == "cosine":
+                tau = 1.0 - (1.0 - args.ema_tau) * (
+                    math.cos(math.pi * global_step / total_steps) + 1.0
+                ) / 2.0
+            else:
+                tau = args.ema_tau
+            model.update_target(tau=tau)
 
             total_loss += loss.item()
-            progress_bar.set_postfix({'BYOL Loss': f"{loss.item():.4f}"})
+            progress_bar.set_postfix({
+                "BYOL Loss": f"{loss.item():.4f}",
+                "tau": f"{tau:.4f}",
+            })
+            global_step += 1
 
         avg_loss = total_loss / len(loader)
-        print(f"Epoch [{epoch+1}/{total_epochs}] Average Loss: {avg_loss:.4f}")
+        lr = optimizer.param_groups[0]["lr"]
+        print(
+            f"Epoch [{epoch+1}/{total_epochs}] Average Loss: {avg_loss:.4f} | "
+            f"LR: {lr:.6f} | tau_final: {tau:.4f}"
+        )
 
-        # Save checkpoint
-        checkpoint_name = f"byol_resnet50_epoch_{epoch+1}.pth"
-        torch.save(model.state_dict(), output_path / checkpoint_name)
+        scheduler.step()
 
-    print("BYOL Training Complete!")
+        # Periodic checkpoint (полный формат)
+        if (epoch + 1) % args.save_every == 0 or (epoch + 1) == total_epochs:
+            checkpoint_name = f"byol_resnet50_epoch_{epoch+1}.pth"
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "best_loss": best_loss,
+                "avg_loss": avg_loss,
+            }, output_path / checkpoint_name)
+            print(f"  Saved checkpoint: {checkpoint_name}")
+
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "best_loss": best_loss,
+            }, output_path / "byol_resnet50_best.pth")
+
+    print(f"BYOL Training Complete! Best avg loss: {best_loss:.4f}")
 
 
 if __name__ == "__main__":
@@ -120,11 +184,19 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
-    parser.add_argument("--ema_tau", type=float, default=0.996)
+    parser.add_argument("--ema_tau", type=float, default=0.996,
+                        help="Base EMA tau (initial value; with cosine schedule "
+                             "ramps up to 1.0)")
+    parser.add_argument("--ema_tau_schedule", type=str, default="cosine",
+                        choices=["cosine", "constant"],
+                        help="tau schedule: 'cosine' (Grill 2020, default) or "
+                             "'constant' (legacy)")
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--subset", type=int, default=0)
     parser.add_argument("--resume", type=str, default="")
     parser.add_argument("--start_epoch", type=int, default=0)
+    parser.add_argument("--save_every", type=int, default=5,
+                        help="Save periodic checkpoint every N epochs (default: 5)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Global seed for reproducibility (torch/numpy/random/cudnn)")
 
