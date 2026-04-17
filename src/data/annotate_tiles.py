@@ -107,13 +107,41 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
   }
   .nav-btns {
-    display: flex; gap: 12px; margin-top: 16px;
+    display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; justify-content: center;
   }
   .nav-btn {
     padding: 8px 20px; border: 1px solid #444; border-radius: 6px;
     background: #16213e; color: #ccc; cursor: pointer; font-size: 0.9em;
   }
   .nav-btn:hover { border-color: #00d4ff; color: #fff; }
+  .nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .per-class-bar {
+    display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
+    margin: 10px 0; font-size: 0.72em;
+  }
+  .per-class-chip {
+    background: #16213e; padding: 4px 10px; border-radius: 12px;
+    display: flex; align-items: center; gap: 6px; position: relative;
+    overflow: hidden; min-width: 110px;
+  }
+  .per-class-chip .chip-bg {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: rgba(0, 212, 255, 0.15); transition: width 0.3s;
+    z-index: 0;
+  }
+  .per-class-chip > * { position: relative; z-index: 1; }
+  .per-class-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .confidence-toggle {
+    display: flex; gap: 8px; align-items: center;
+    margin: 8px 0; font-size: 0.8em; color: #a0a0a0;
+  }
+  .confidence-toggle .toggle {
+    padding: 4px 10px; border-radius: 4px; cursor: pointer;
+    border: 1px solid #444; background: #16213e;
+  }
+  .confidence-toggle .toggle.active { border-color: #00d4ff; color: #00d4ff; }
   .progress-bar {
     width: 100%; height: 4px; background: #333; border-radius: 2px;
     margin: 12px 0; overflow: hidden;
@@ -148,6 +176,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <span id="strategy-label">strategy: loading...</span>
   </div>
 
+  <!-- Per-class прогресс: видно, какие классы под-представлены -->
+  <div class="per-class-bar" id="per-class-bar"></div>
+
+  <!-- Confidence toggle: low-confidence метки отдельно помечены -->
+  <div class="confidence-toggle">
+    Confidence:
+    <span class="toggle active" id="conf-high" onclick="setConfidence('high')">
+      high (по умолчанию)
+    </span>
+    <span class="toggle" id="conf-low" onclick="setConfidence('low')">
+      low (под сомнением)
+    </span>
+  </div>
+
   <div class="main">
     <div class="tile-container">
       <div class="annotate-label">▼ ОЦЕНИТЕ ЭТОТ ТАЙЛ ▼</div>
@@ -166,6 +208,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <button class="nav-btn" onclick="nextUnannotated()">Следующий без метки (N)</button>
     <button class="nav-btn" id="propagate-btn" onclick="togglePropagation()">
       🧠 Label propagation (P)
+    </button>
+    <button class="nav-btn" onclick="undoLast()" title="Отменить последнюю разметку (U)">
+      ⎌ Undo (U)
+    </button>
+    <button class="nav-btn" onclick="doExport()"
+            title="Сохранить snapshot в data/annotations_exports/">
+      💾 Export
     </button>
   </div>
   <div id="propagation-panel" style="display:none; margin-top:12px; padding:10px;
@@ -217,11 +266,27 @@ async function fetchNextBatch() {
   }
 }
 
+// Confidence state — применяется к следующей annotation.
+// Сохраняется в localStorage между reload'ами.
+let currentConfidence = localStorage.getItem('sft_confidence') || 'high';
+
+function setConfidence(level) {
+  currentConfidence = level;
+  localStorage.setItem('sft_confidence', level);
+  document.getElementById('conf-high').classList.toggle('active', level === 'high');
+  document.getElementById('conf-low').classList.toggle('active', level === 'low');
+}
+
 async function refreshStats() {
   try {
-    const resp = await fetch('/api/stats');
-    serverStats = await resp.json();
+    const [statsResp, classResp] = await Promise.all([
+      fetch('/api/stats'),
+      fetch('/api/progress_by_class?target=50'),
+    ]);
+    serverStats = await statsResp.json();
+    const classData = await classResp.json();
     renderStats();
+    renderPerClass(classData);
   } catch (_) { /* ignore */ }
 }
 
@@ -238,7 +303,62 @@ function renderStats() {
   document.getElementById('progress-pct').textContent = pct + '%';
 }
 
+function renderPerClass(data) {
+  const container = document.getElementById('per-class-bar');
+  container.innerHTML = '';
+  data.per_class.forEach(r => {
+    const chip = document.createElement('div');
+    chip.className = 'per-class-chip';
+    const widthPct = (r.pct * 100).toFixed(0);
+    chip.innerHTML = `
+      <div class="chip-bg" style="width:${widthPct}%;
+           background: ${r.color}33;"></div>
+      <span class="per-class-dot" style="background:${r.color}"></span>
+      <span>${r.label}</span>
+      <span style="color:#888;">${r.count}/${r.target}</span>
+    `;
+    container.appendChild(chip);
+  });
+}
+
+async function undoLast() {
+  if (!confirm('Отменить последнюю разметку?')) return;
+  const resp = await fetch('/api/undo', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({}),
+  });
+  const data = await resp.json();
+  if (!data.removed || data.removed.length === 0) {
+    alert('Нет разметки для отмены.');
+    return;
+  }
+  const r = data.removed[0];
+  delete annotations[r.filename];
+  await refreshStats();
+  // Вернуть этот тайл в начало очереди для немедленной переразметки.
+  // Достаточно достать ещё одну partию — сервер его теперь увидит unlabeled.
+  const more = await fetchNextBatch();
+  tiles = more.concat(tiles.filter(t => !annotations[t.filename]));
+  currentIdx = 0;
+  showTile();
+  alert(`Отменена разметка: ${r.filename} → ${r.cluster}`);
+}
+
+async function doExport() {
+  const resp = await fetch('/api/export', {method: 'POST'});
+  const data = await resp.json();
+  if (data.path) {
+    alert(`Snapshot сохранён:\n${data.path}\nСтрок: ${data.rows}`);
+  } else {
+    alert(`Export failed: ${data.reason || 'unknown'}`);
+  }
+}
+
 async function init() {
+  // Инициализация confidence из localStorage
+  setConfidence(currentConfidence);
+
   // Существующие разметки
   const annResp = await fetch('/api/annotations');
   const annData = await annResp.json();
@@ -297,11 +417,15 @@ async function annotate(clusterId) {
   annotations[t.filename] = clusterId;
   history.push(currentIdx);
 
-  // Сохранить на сервере.
+  // Сохранить на сервере (с confidence из toggle).
   await fetch('/api/annotate', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({filename: t.filename, cluster: clusterId})
+    body: JSON.stringify({
+      filename: t.filename,
+      cluster: clusterId,
+      confidence: currentConfidence,
+    }),
   });
 
   // Убрать размеченный тайл из текущего ranked-батча.
@@ -470,6 +594,12 @@ document.addEventListener('keydown', (e) => {
   if (key === 's' || key === 'ы') { skipTile(); return; }
   if (key === 'n' || key === 'т') { nextUnannotated(); return; }
   if (key === 'p' || key === 'з') { togglePropagation(); return; }
+  if (key === 'u' || key === 'г') { undoLast(); return; }
+  // Toggle confidence low/high на Shift для быстрого переключения «я сомневаюсь».
+  if (e.shiftKey && (key === 'c' || key === 'с')) {
+    setConfidence(currentConfidence === 'high' ? 'low' : 'high');
+    return;
+  }
   const cluster = CLUSTERS.find(c => c.key === key);
   if (cluster) annotate(cluster.id);
 });
@@ -493,22 +623,45 @@ class AnnotationHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def _load_annotations(self):
-        """Load existing annotations from CSV."""
+        """Load existing annotations from CSV.
+
+        Backward compatible: старый формат (filename, cluster) читается;
+        новый формат (filename, cluster, confidence, timestamp) — тоже.
+        """
         anns = {}
+        self._confidence: dict[str, str] = {}
+        self._timestamps: dict[str, str] = {}
         if self.annotations_path and self.annotations_path.exists():
             with open(self.annotations_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    anns[row['filename']] = row['cluster']
+                    fname = row['filename']
+                    anns[fname] = row['cluster']
+                    if row.get('confidence'):
+                        self._confidence[fname] = row['confidence']
+                    if row.get('timestamp'):
+                        self._timestamps[fname] = row['timestamp']
         return anns
 
     def _save_annotations(self):
-        """Persist annotations as unique filename -> cluster mapping."""
+        """Persist annotations in the extended format.
+
+        Columns: filename, cluster, confidence, timestamp.
+        Legacy readers that only read (filename, cluster) keep working
+        because DictReader скипает неизвестные колонки.
+        """
         with open(self.annotations_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['filename', 'cluster'])
+            writer = csv.DictWriter(
+                f, fieldnames=['filename', 'cluster', 'confidence', 'timestamp'],
+            )
             writer.writeheader()
             for fname, cluster in sorted(self._annotations.items()):
-                writer.writerow({'filename': fname, 'cluster': cluster})
+                writer.writerow({
+                    'filename': fname,
+                    'cluster': cluster,
+                    'confidence': self._confidence.get(fname, ''),
+                    'timestamp': self._timestamps.get(fname, ''),
+                })
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -616,6 +769,32 @@ class AnnotationHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode())
 
+        elif parsed.path == '/api/progress_by_class':
+            # Возвращает: для каждого CLUSTERS класса — count и percent от target.
+            q = parse_qs(parsed.query or "")
+            target = int((q.get("target") or ["50"])[0])
+            from collections import Counter
+            counts = Counter(self._annotations.values())
+            rows = [
+                {
+                    "cluster_id": c["id"],
+                    "label": c["label"],
+                    "color": c["color"],
+                    "count": int(counts.get(c["id"], 0)),
+                    "target": target,
+                    "pct": round(min(counts.get(c["id"], 0) / target, 1.0), 4),
+                }
+                for c in CLUSTERS
+            ]
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "per_class": rows,
+                "target_per_class": target,
+                "total": len(self._annotations),
+            }).encode())
+
         elif parsed.path == '/api/annotations':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -645,14 +824,76 @@ class AnnotationHandler(SimpleHTTPRequestHandler):
             body = json.loads(self.rfile.read(content_len))
             filename = body['filename']
             cluster = body['cluster']
+            confidence = body.get('confidence', 'high')  # high|low
+            from datetime import datetime, timezone
+            # microseconds нужны, чтобы undo (который берёт max по timestamp)
+            # корректно определял «последнюю» запись даже при быстрой разметке.
+            timestamp = datetime.now(timezone.utc).isoformat(timespec='microseconds')
 
             self._annotations[filename] = cluster
+            self._confidence[filename] = confidence
+            self._timestamps[filename] = timestamp
             self._save_annotations()
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({'ok': True}).encode())
+            self.wfile.write(json.dumps({'ok': True, 'timestamp': timestamp}).encode())
+
+        elif self.path == '/api/undo':
+            # Удаляет последнюю N записей (по timestamp) или конкретный filename.
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len else {}
+            filename = body.get('filename')
+
+            removed = []
+            if filename:
+                if filename in self._annotations:
+                    removed.append({
+                        "filename": filename,
+                        "cluster": self._annotations.pop(filename),
+                        "confidence": self._confidence.pop(filename, ''),
+                        "timestamp": self._timestamps.pop(filename, ''),
+                    })
+            else:
+                # Найти самую последнюю запись по timestamp.
+                if self._timestamps:
+                    latest = max(self._timestamps.items(), key=lambda kv: kv[1])
+                    fname = latest[0]
+                    removed.append({
+                        "filename": fname,
+                        "cluster": self._annotations.pop(fname),
+                        "confidence": self._confidence.pop(fname, ''),
+                        "timestamp": self._timestamps.pop(fname, ''),
+                    })
+            if removed:
+                self._save_annotations()
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'removed': removed}).encode())
+
+        elif self.path == '/api/export':
+            # Snapshot-копия sft_annotations.csv с timestamp в имени.
+            # Полезно перед большими изменениями (batch propagation, undo N).
+            from datetime import datetime
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            exports_dir = self.annotations_path.parent / 'annotations_exports'
+            exports_dir.mkdir(parents=True, exist_ok=True)
+            out_path = exports_dir / f'sft_annotations_{ts}.csv'
+            import shutil
+            if self.annotations_path.exists():
+                shutil.copy2(self.annotations_path, out_path)
+                payload = {'path': str(out_path), 'rows': len(self._annotations)}
+            else:
+                payload = {'path': None, 'rows': 0,
+                           'reason': 'annotations file missing'}
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
         else:
             self.send_response(404)
             self.end_headers()
