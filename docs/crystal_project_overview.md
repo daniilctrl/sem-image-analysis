@@ -7,68 +7,76 @@
 
 **Метод:** Контрастивное обучение (SimCLR), ResNet18, 5-канальные патчи 32×32.
 
+> Обновлено: 2026-04-17.
+
 ---
 
-## Разделение на практики
-
-### Учебная практика (теоретико-исследовательская)
+## Пайплайн
 
 | Этап | Содержание | Файлы |
 |------|-----------|-------|
-| 1. Обзор литературы | Методы анализа поверхности кристаллов, контрастивное обучение (SimCLR/BYOL) | — |
-| 2. Изучение данных | Структура BCC-решётки, физический смысл n1–n5, формулы RGB и grayscale | — |
-| 3. Загрузка и валидация | Парсинг Excel, проверка диапазонов, сохранение в parquet | `src/crystal/load_data.py` |
-| 4. 3D-визуализация | Полусфера в RGB и grayscale, сравнение со слайдами руководителя | `src/crystal/visualize_surface.py` |
-| 5. Генерация патчей | KDTree, касательная плоскость, Грам-Шмидт, растеризация 32×32 | `src/crystal/patch_generator.py` |
-
-**Итог:** подготовленный датасет (150 000 патчей) + обоснование выбранного подхода.
-
-### Производственная практика (инженерно-практическая)
-
-| Этап | Содержание | Файлы |
-|------|-----------|-------|
-| 1. Датасет и аугментации | PyTorch Dataset, повороты 90°, шум, channel dropout | `dataset_crystal.py`, `augmentations_crystal.py` |
-| 2. Архитектура модели | ResNet18 (5 каналов, без maxpool), проекционная голова 512→128 | `model_crystal.py` |
-| 3. Обучение | NT-Xent loss, Adam, cosine LR, 50 эпох на GPU (Colab T4) | `train_crystal.py` |
-| 4. Кластеризация | Извлечение 512-мерных эмбеддингов, KMeans (8 кластеров), метрики | `extract_crystal_embeddings.py` |
-| 5. Визуализация | UMAP, Plotly 3D (интерактивный), проекция Мольвейде | `visualize_crystal.py` |
-| 6. Отчёт | Интерактивный HTML-отчёт | `notebooks/generate_html_report.py` |
-
-**Итог:** работающий end-to-end пайплайн + интерактивный отчёт с 3D-картой кластеров.
+| 1. Загрузка данных | Парсинг координат, валидация, сохранение | `src/crystal/load_data.py` |
+| 2. Генерация патчей | KDTree → касательная плоскость → Грам-Шмидт → растеризация 32×32 | `src/crystal/patch_generator.py` |
+| 3. Обучение SimCLR | NT-Xent loss, ResNet18 (5ch), cosine annealing, 50 эпох | `src/crystal/train_crystal.py`, `model_crystal.py` |
+| 4. Аугментации | Rotation90, Flip, CropResize, GaussianNoise, ChannelDrop | `src/crystal/augmentations_crystal.py` |
+| 5. Эмбеддинги + кластеры | 512-мерные эмбеддинги, KMeans (k=5,8,10) | `src/crystal/extract_crystal_embeddings.py` |
+| 6. Оптимизация k | Silhouette, CH, DB, Elbow, AMI для k=3..20 | `src/crystal/optimize_clusters.py` |
+| 7. Miller-классификация | 9 BCC-семейств + Vicinal, кросс-табуляция vs кластеры | `src/crystal/miller_utils.py`, `analyze_miller_indices.py` |
+| 8. Retrieval | FAISS nearest-neighbor, precision@K_miller, cluster_coherence@K | `src/crystal/retrieve_crystal.py` |
+| 9. Визуализация | UMAP, Plotly 3D, проекция Мольвейде, HTML-отчёт | `src/crystal/visualize_crystal.py` |
 
 ---
 
 ## Ключевые результаты
 
-- **270 509** атомов загружено и валидировано
-- **149 947** поверхностных патчей сгенерировано
+- **149 947** поверхностных патчей (5 каналов, 32×32)
 - **NT-Xent Loss = 1.82** после 50 эпох обучения
-- **8 кластеров** формируют зональные паттерны, соответствующие физической топографии
+- **k = 8** кластеров — компромиссный выбор (обоснование: `data/crystal/analysis/k_selection_justification.md`); физически обоснованная оценка ~20 зон
+- **9 семейств Миллера** + Vicinal/Mixed — реализованы в `miller_utils.py`
+- **Retrieval**: FAISS cosine similarity, precision@K_miller как внешняя метрика
 
 ---
 
 ## Как запустить
 
 ```bash
-# 1. Загрузка данных
-python src/crystal/load_data.py
-
-# 2. Визуализация полусферы
-python src/crystal/visualize_surface.py
-
-# 3. Генерация патчей (~15 мин)
+# 1. Генерация патчей (~15 мин)
 python src/crystal/patch_generator.py
 
-# 4. Обучение (GPU, Colab)
+# 2. Обучение (GPU, Colab)
 python src/crystal/train_crystal.py --epochs 50 --device cuda
 
-# 5. Эмбеддинги + кластеры
+# 3. Эмбеддинги + кластеры
 python src/crystal/extract_crystal_embeddings.py \
     --checkpoint models/crystal/crystal_simclr_best.pth
 
-# 6. Визуализация кластеров
+# 4. Оптимизация k
+python src/crystal/optimize_clusters.py
+
+# 5. Miller-классификация
+python src/crystal/analyze_miller_indices.py
+
+# 6. Retrieval
+python src/crystal/retrieve_crystal.py --K 10
+
+# 7. Визуализация кластеров
 python src/crystal/visualize_crystal.py --n_clusters 8
 
-# 7. HTML-отчёт
-python notebooks/generate_html_report.py
+# 8. Smoke-тесты
+python tests/test_smoke.py
 ```
+
+---
+
+## Артефакты
+
+| Файл | Описание |
+|------|----------|
+| `data/crystal/patches/patches.npy` | (N, 5, 32, 32) — патчи |
+| `data/crystal/patches/patches_metadata.csv` | X, Y, Z + neighbor counts |
+| `data/crystal/embeddings/crystal_embeddings.npy` | (N, 512) — эмбеддинги |
+| `data/crystal/embeddings/embeddings_metadata.csv` | Метаданные + cluster labels |
+| `data/crystal/analysis/cluster_optimization_metrics.csv` | Метрики для k=3..20 |
+| `data/crystal/analysis/k_selection_justification.md` | Обоснование выбора k |
+| `data/crystal/analysis/miller_classification_crosstab.csv` | Кластеры vs Miller |
+| `models/crystal/crystal_simclr_best.pth` | Лучший чекпоинт |

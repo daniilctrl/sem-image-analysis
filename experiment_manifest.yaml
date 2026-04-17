@@ -1,0 +1,286 @@
+# ============================================================
+# Experiment Manifest — Diploma Project
+# "Методы глубокого обучения для обратного поиска и
+#  кластеризации текстур наноструктурированных поверхностей
+#  по микроскопическим изображениям"
+#
+# Автор: Даниил Родионов, СПбГУ
+# Дата генерации: 2026-04-17
+# ============================================================
+
+# -------- Общие параметры --------
+project:
+  random_seed: 42                # default seed для subset sampling и KMeans
+  python: ">=3.10"
+  key_libraries:
+    torch: ">=2.0.0"
+    torchvision: ">=0.15.0"
+    numpy: ">=1.24.0"
+    pandas: ">=2.0.0"
+    scikit-learn: ">=1.2.0"
+    faiss-cpu: ">=1.7.4"
+    umap-learn: ">=0.5.3"
+    scipy: ">=1.10.0"
+    matplotlib: ">=3.7.0"
+
+# ============================================================
+# BRANCH 1: Crystal / BCC
+# ============================================================
+crystal:
+  description: >
+    SimCLR на 5-канальных патчах поверхности BCC-кристалла (полусфера).
+    Каждый канал — нормированное число n-ых ближайших соседей атома.
+
+  data:
+    source: "BCC hemisphere atom coordinates + neighbor counts"
+    input_file: "data/crystal/bcc_data.csv"      # X, Y, Z, n1..n5
+    patch_dir: "data/crystal/patches/"
+    patch_file: "patches.npy"
+    metadata_file: "patches_metadata.csv"
+    channels: 5                                    # [n1_norm, n2_norm, n3_norm, n4_norm, n5_norm]
+    max_neighbors: [8, 6, 12, 24, 8]              # normalization divisors per channel
+    resolution: 32                                 # 32×32 pixels per patch
+    window_radius: 10.0                            # Å, local tangent-plane projection radius
+
+  patch_generation:
+    script: "src/crystal/patch_generator.py"
+    algorithm: "KDTree → tangent-plane projection → Gram-Schmidt basis → rasterization"
+    kdtree_radius: "window_radius (10.0 Å)"
+    basis_method: "cross-product with auxiliary vector, Gram-Schmidt orthogonalization"
+
+  model:
+    name: "CrystalSimCLR"
+    script: "src/crystal/model_crystal.py"
+    backbone: "ResNet18 (weights=None)"
+    modifications:
+      conv1: "Conv2d(5, 64, kernel_size=3, stride=1, padding=1)"  # was 7×7 stride=2
+      maxpool: "nn.Identity()"                                      # removed for 32×32 input
+    encoder_dim: 512
+    projection_head: "Linear(512→512, BN, ReLU) → Linear(512→128, BN)"
+    output_dim: 128
+    total_parameters: "~11.2M"
+
+  training:
+    script: "src/crystal/train_crystal.py"
+    framework: "SimCLR (NT-Xent loss)"
+    loss: "NTXentLoss"
+    optimizer: "Adam"
+    learning_rate: 3.0e-4
+    weight_decay: 1.0e-4
+    scheduler: "CosineAnnealingLR(T_max=epochs, eta_min=1e-6)"
+    temperature: 0.2
+    batch_size: 64
+    epochs: 50                   # default; actual trained epochs may differ
+    save_every: 10
+    checkpoint_format: "dict{epoch, model_state_dict, optimizer_state_dict, scheduler_state_dict, best_loss, avg_loss}"
+    checkpoint_dir: "models/crystal/"
+
+  augmentations:
+    script: "src/crystal/augmentations_crystal.py"
+    pipeline_strong:
+      - "RandomRotation90 (0°/90°/180°/270°)"
+      - "RandomFlip (horizontal + vertical, p=0.5 each)"
+      - "RandomCropResize (scale 0.5–1.0, bilinear interpolation)"
+      - "GaussianNoise (std=0.03)"
+      - "ChannelDrop (p=0.1, zeroes one random channel)"
+    pipeline_weak:
+      - "RandomRotation90"
+      - "RandomFlip"
+    rationale: >
+      No color jitter — channels encode physical neighbor counts, not optical colors.
+      Rotation/flip: crystal surface is orientation-invariant.
+      Noise: models uncertainty in neighbor counting.
+      ChannelDrop: prevents over-reliance on one neighbor order.
+
+  embedding_extraction:
+    script: "src/crystal/extract_crystal_embeddings.py"
+    output_dir: "data/crystal/embeddings/"
+    output_embeddings: "data/crystal/embeddings/crystal_embeddings.npy"
+    output_metadata: "data/crystal/embeddings/embeddings_metadata.csv"
+    output_indices: "data/crystal/embeddings/crystal_embedding_indices.npy"
+    normalization: "L2-normalized (model output is already F.normalize'd)"
+    checkpoint_loading: "auto-detect dict vs raw state_dict"
+
+  clustering:
+    script: "src/crystal/optimize_clusters.py"
+    algorithm: "MiniBatchKMeans (scikit-learn)"
+    k_range_scanned: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20]
+    selected_k: 8
+    k_justification: "data/crystal/analysis/k_selection_justification.md"
+    k_criteria:
+      elbow: "first plausible elbow / 2nd-derivative sign change around k=8"
+      davies_bouldin: "early local minimum around k=8, though DB keeps improving for larger k"
+      physical: "k=8 used as lower-bound compromise; physically motivated alternative is k≈20"
+    metrics_file: "data/crystal/analysis/cluster_optimization_metrics.csv"
+    metrics_computed:
+      - "Silhouette Score"
+      - "Calinski-Harabasz Index"
+      - "Davies-Bouldin Index"
+      - "Inertia (Elbow)"
+      - "AMI vs Miller labels"
+
+  miller_classification:
+    script: "src/crystal/miller_utils.py"
+    families: 9                  # {100},{110},{111},{210},{211},{221},{310},{321},{411}
+    vicinal_label: "Vicinal/Mixed"
+    tolerance_deg: 6.0           # default angular tolerance for family assignment
+    method: "vectorized: arccos(max |dot(unit_vec, ref_vecs)|) ≤ tol"
+
+  retrieval:
+    script: "src/crystal/retrieve_crystal.py"
+    index: "FAISS IndexFlatIP (L2-normalized → cosine similarity)"
+    metrics:
+      - "cluster_coherence@K (diagnostic only; circular metric)"
+      - "precision@K_miller (primary external metric)"
+      - "Mean cosine similarity@K"
+    default_K: 10
+
+# ============================================================
+# BRANCH 2: SEM / SiC
+# ============================================================
+sem:
+  description: >
+    Contrastive learning (SimCLR, BYOL) + ImageNet baseline на СЭМ-изображениях
+    наноструктурированных SiC поверхностей. Цель — масштабно-инвариантные
+    представления для обратного поиска и кластеризации текстур.
+
+  data:
+    source: "SEM microscopy images of SiC surfaces at multiple magnifications"
+    metadata: "data/processed/tiles_metadata.csv"
+    tile_dir: "data/processed/"
+    magnifications: "multiple scales (cross-scale evaluation)"
+
+  models:
+    baseline:
+      name: "ResNet50 (ImageNet V2)"
+      weights: "ResNet50_Weights.IMAGENET1K_V2"
+      encoder_dim: 2048
+      embeddings_file: "data/embeddings/resnet50_embeddings.npy"
+
+    simclr:
+      name: "SimCLR"
+      script: "src/models/deep_clustering/train.py"
+      model_script: "src/models/deep_clustering/model.py"
+      backbone: "ResNet50 (pretrained ImageNet V2)"
+      projection_head: "Linear(2048→2048, ReLU) → Linear(2048→128)"
+      output_dim: 128
+      loss: "NTXentLoss"
+      optimizer: "Adam"
+      learning_rate: 3.0e-4
+      weight_decay: 1.0e-4
+      temperature: 0.5
+      batch_size: 32              # default; Colab T4 supports 64-128
+      epochs: 10                  # default; recommended 30 for thesis
+      checkpoint_format: "raw state_dict"
+      checkpoint_dir: "models/checkpoints/"
+      embeddings_file: "data/embeddings/simclr/finetuned_embeddings.npy"
+      names_file: "data/embeddings/simclr/finetuned_embedding_names.csv"
+
+    byol:
+      name: "BYOL"
+      script: "src/models/deep_clustering/train_byol.py"
+      backbone: "ResNet50 (pretrained ImageNet V2)"
+      architecture: "Online (encoder+projector+predictor) → Target (encoder+projector, EMA)"
+      ema_tau: 0.996
+      optimizer: "Adam (online params only)"
+      learning_rate: 3.0e-4
+      weight_decay: 1.0e-4
+      loss: "byol_loss (MSE of L2-normalized projections, symmetric)"
+      batch_size: 64
+      epochs: 30
+      checkpoint_format: "raw state_dict"
+      checkpoint_dir: "models/checkpoints_byol/"
+      embeddings_file: "data/embeddings/byol/finetuned_embeddings.npy"
+      names_file: "data/embeddings/byol/finetuned_embedding_names.csv"
+
+  augmentations:
+    script: "src/models/deep_clustering/augmentations.py"
+    input_size: 224
+    pipeline:
+      - "RandomResizedCrop(224, scale=0.2–1.0)"
+      - "RandomHorizontalFlip"
+      - "RandomVerticalFlip"
+      - "ColorJitter(brightness=0.4, contrast=0.4, saturation=0, hue=0) p=0.8"
+      - "GaussianBlur(sigma=0.1–2.0) p=0.5"
+      - "ToTensor"
+      - "AddGaussianNoise(mean=0, std=0.04) p=0.2"
+      - "Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])"
+    rationale: >
+      SEM images are grayscale → no hue/saturation jitter.
+      GaussianBlur simulates defocus, GaussianNoise simulates detector noise.
+      Aggressive RandomResizedCrop for scale invariance.
+
+  embedding_extraction:
+    script: "src/models/deep_clustering/extract_simclr_embeddings.py"
+    normalization: "L2-normalized after extraction (for FAISS cosine)"
+
+  evaluation:
+    unified_script: "src/evaluation/run_sem_evaluation.py"
+    shared_utils: "src/evaluation/eval_utils.py"
+
+    cross_scale_retrieval:
+      script: "src/evaluation/cross_scale_retrieval.py"
+      comparison_wrapper: "src/evaluation/cross_scale_comparison.py"
+      index: "FAISS IndexFlatIP (L2-normalized → cosine)"
+      default_K: 10
+      metrics:
+        - "Precision@K (same material)"
+        - "Precision@K (cross-scale: query and result have different magnification)"
+
+    scale_invariance:
+      script: "src/evaluation/scale_invariance_metrics.py"
+      clustering: "KMeans"
+      default_n_clusters: 4
+      normalize_embeddings: true    # L2-normalize before KMeans (--normalize flag)
+      metrics:
+        - "Cramér's V (cluster vs magnification independence)"
+        - "AMI (cluster vs magnification mutual information)"
+        - "MagVarRatio (per-cluster magnification variance / overall variance)"
+        - "Magnification Entropy (per-cluster uniformity of magnification distribution)"
+
+    clustering:
+      script: "src/evaluation/evaluate_sic_clustering.py"
+      metrics:
+        - "Silhouette Score"
+        - "Calinski-Harabasz Index"
+        - "Davies-Bouldin Index"
+
+# ============================================================
+# Reproducibility Notes
+# ============================================================
+reproducibility:
+  random_seeds:
+    subset_sampling: 42
+    kmeans: 42  # sklearn default
+    numpy_rng: "not globally seeded — TODO: add np.random.seed(42)"
+    torch_rng: "not globally seeded — TODO: add torch.manual_seed(42)"
+
+  known_non_determinism:
+    - "CUDA operations (cuDNN non-deterministic by default)"
+    - "KDTree neighbor ordering in patch_generator when distances are equal"
+    - "FAISS IndexFlatIP tie-breaking for equidistant vectors"
+
+  colab_training:
+    notebook: "notebooks/SimCLR_Colab.ipynb"
+    gpu: "NVIDIA T4 16GB (Colab free) or A100 (Colab Pro)"
+    drive_checkpoints: "/content/drive/MyDrive/diploma_checkpoints/"
+    drive_results: "/content/drive/MyDrive/diploma_results/"
+
+  checkpoint_format_notes: >
+    Crystal branch: saves full dict (model + optimizer + scheduler state).
+    SEM branch: saves raw state_dict only (legacy format).
+    extract_crystal_embeddings.py auto-detects both formats.
+
+  sem_data_contract: >
+    Each SEM embedding file has a companion names file mapping row index → tile_name:
+      - Baseline: data/embeddings/embedding_names.csv
+      - SimCLR:   data/embeddings/simclr/finetuned_embedding_names.csv
+      - BYOL:     data/embeddings/byol/finetuned_embedding_names.csv
+    eval_utils.load_aligned_data() uses the model-specific names file to merge
+    with tiles_metadata.csv via inner join on tile_name, ensuring strict alignment.
+    If a model-specific names file is missing, it falls back to the root
+    embedding_names.csv with a UserWarning. If names count != embeddings count,
+    it falls back to raw metadata index alignment (only when metadata row count
+    matches embeddings count exactly) with another UserWarning.
+    IMPORTANT: embedding_names.csv is currently stale (24183 rows vs 22791
+    embeddings). After re-extracting embeddings, update embedding_names.csv.
