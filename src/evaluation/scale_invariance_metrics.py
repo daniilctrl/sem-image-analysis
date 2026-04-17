@@ -29,9 +29,63 @@ from src.evaluation.eval_utils import (
     DEFAULT_META_PATH, DEFAULT_EMB_DIR, DEFAULT_OUTPUT_DIR, MODEL_CONFIGS,
 )
 
-# Log-scale bins for magnification (6 orders of magnitude: 10^1 to 10^6)
+# Default (legacy hardcoded) log-scale bins for magnification.
+# Покрывают 6 порядков величины: 10^1 to 10^6. Подходят для вольфрама W,
+# но могут не совпадать с реальным распределением mag в tiles_metadata.csv.
+# Предпочтительный путь — compute_adaptive_mag_bins().
 MAG_BINS = [0, 100, 1000, 10000, 100000, 1e7]
 MAG_BIN_LABELS = ['<100x', '100–1K', '1K–10K', '10K–100K', '>100K']
+
+
+def compute_adaptive_mag_bins(
+    mag_values: np.ndarray,
+    n_bins: int = 5,
+    method: str = "log_quantile",
+) -> tuple[list[float], list[str]]:
+    """Вычисляет бины увеличения адаптивно к реальному распределению.
+
+    Хардкод `MAG_BINS = [0, 100, 1000, 10000, 100000, 1e7]` предполагает
+    конкретный диапазон. На реальных данных распределение может быть
+    смещено (например, все снимки при mag ∈ [500, 50000]). Адаптивные бины
+    гарантируют, что в каждом бине есть примерно равное число тайлов
+    (log-quantile), либо что границы совпадают с «природными» breakpoints
+    (для log_quantile это и есть квантили).
+
+    Аргументы:
+        mag_values: все значения mag из dataset (может содержать NaN).
+        n_bins: число бинов (default 5).
+        method: 'log_quantile' (квантили в log10-пространстве) или
+                'log_linear' (равные интервалы в log10).
+
+    Возвращает:
+        (bins, labels) — как у pd.cut.
+    """
+    finite = np.asarray(mag_values, dtype=np.float64)
+    finite = finite[~np.isnan(finite)]
+    finite = finite[finite > 0]
+    if len(finite) == 0:
+        return MAG_BINS, MAG_BIN_LABELS
+
+    log_mags = np.log10(finite)
+
+    if method == "log_quantile":
+        edges = np.percentile(log_mags, np.linspace(0, 100, n_bins + 1))
+    elif method == "log_linear":
+        edges = np.linspace(log_mags.min(), log_mags.max(), n_bins + 1)
+    else:
+        raise ValueError(f"Unknown method: {method!r}")
+
+    bins = [float(10 ** e) for e in edges]
+    # Слегка расширим нижнюю и верхнюю границы, чтобы pd.cut не терял краевые точки.
+    bins[0] = max(0.0, bins[0] * 0.99)
+    bins[-1] = bins[-1] * 1.01
+
+    labels = []
+    for i in range(len(bins) - 1):
+        lo = int(round(bins[i]))
+        hi = int(round(bins[i + 1]))
+        labels.append(f"{lo}-{hi}" if lo > 0 else f"≤{hi}")
+    return bins, labels
 
 
 def magnification_entropy(labels, magnifications, n_clusters, bins, bin_labels):
@@ -119,7 +173,27 @@ def mag_variance_ratio(labels, log_mags, n_clusters):
 def main(args):
     print("Loading and aligning data...\n")
 
-    max_ent = np.log2(len(MAG_BIN_LABELS))
+    # Adaptive mag bins: один набор на весь запуск (чтобы сравнивать модели
+    # на одних и тех же bin-границах). Вычисляется по первой доступной модели.
+    first_mags = None
+    for model_name in MODEL_CONFIGS:
+        try:
+            _, meta_first = load_aligned_data(model_name, args.emb_dir, args.meta_path)
+            first_mags = meta_first["mag"].values
+            break
+        except FileNotFoundError:
+            continue
+
+    if args.adaptive_bins and first_mags is not None:
+        bins, bin_labels = compute_adaptive_mag_bins(
+            first_mags, n_bins=args.n_bins, method=args.bin_method,
+        )
+        print(f"Adaptive bins ({args.bin_method}, n_bins={args.n_bins}): {bin_labels}")
+    else:
+        bins, bin_labels = MAG_BINS, MAG_BIN_LABELS
+        print(f"Using hardcoded bins: {bin_labels}")
+
+    max_ent = np.log2(len(bin_labels))
     summary_rows = []
 
     for model_name in MODEL_CONFIGS:
@@ -133,7 +207,7 @@ def main(args):
 
         mags = meta['mag'].values
         log_mags = np.log10(mags)
-        mag_binned = pd.cut(mags, bins=MAG_BINS, labels=MAG_BIN_LABELS)
+        mag_binned = pd.cut(mags, bins=bins, labels=bin_labels)
 
         # L2-normalize if requested (default: True for consistency with evaluate_sic_clustering)
         if args.normalize:
@@ -144,7 +218,7 @@ def main(args):
 
         # Metric 1: Entropy
         _, weighted_avg_ent, _ = magnification_entropy(
-            labels, mags, args.n_clusters, MAG_BINS, MAG_BIN_LABELS
+            labels, mags, args.n_clusters, bins, bin_labels
         )
 
         # Metric 2: Cramér's V
@@ -195,5 +269,13 @@ if __name__ == '__main__':
                         help="L2-normalize embeddings before KMeans (default: True)")
     parser.add_argument("--no-normalize", dest="normalize", action="store_false",
                         help="Use raw embeddings for KMeans")
+    parser.add_argument("--adaptive_bins", action="store_true", default=True,
+                        help="Compute mag bins adaptively from data distribution "
+                             "instead of hardcoded MAG_BINS (default: True)")
+    parser.add_argument("--no-adaptive-bins", dest="adaptive_bins", action="store_false")
+    parser.add_argument("--n_bins", type=int, default=5,
+                        help="Number of adaptive bins (default: 5)")
+    parser.add_argument("--bin_method", type=str, default="log_quantile",
+                        choices=["log_quantile", "log_linear"])
     args = parser.parse_args()
     main(args)

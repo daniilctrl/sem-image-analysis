@@ -80,10 +80,11 @@ all = [
     "PyMuPDF>=1.23.0",
 ]
 
-# Developer-only dependencies (tests, linting).
+# Developer-only dependencies (tests, linting, training observability).
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "tensorboard>=2.10",
 ]
 
 [tool.setuptools]
