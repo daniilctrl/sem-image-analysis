@@ -18,12 +18,17 @@
 """
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
 from tqdm import tqdm
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+from src.utils.repro import set_global_seed
 
 
 # Порядок каналов и нормировочные множители
@@ -307,6 +312,9 @@ def visualize_sample_patches(
 
 
 def main(args):
+    used_seed = set_global_seed(args.seed, deterministic_torch=False)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     print("Loading data...")
     df = pd.read_parquet(args.parquet_path)
     print(f"  Loaded {len(df):,} atoms")
@@ -335,5 +343,7 @@ if __name__ == "__main__":
     parser.add_argument("--resolution", type=int, default=32, help="Patch resolution (32x32)")
     parser.add_argument("--window_radius", type=float, default=10.0, help="2D projection window radius")
     parser.add_argument("--search_radius", type=float, default=15.0, help="3D neighbor search radius (>= window_radius)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global seed for reproducibility of anchor sampling")
     args = parser.parse_args()
     main(args)

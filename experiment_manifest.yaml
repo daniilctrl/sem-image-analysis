@@ -104,13 +104,22 @@ crystal:
   clustering:
     script: "src/crystal/optimize_clusters.py"
     algorithm: "MiniBatchKMeans (scikit-learn)"
-    k_range_scanned: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20]
-    selected_k: 8
+    k_range_scanned: [3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+    # Near-best diapason (not a single "best k"). See justification document.
+    recommended_k_coarse: 35                 # balanced candidate: интерпретируемость + Miller purity
+    recommended_k_fine: 50                   # fine-grained candidate: max Miller purity
+    radius_context: "R = 50 lattice parameters"
+    applicability_note: >
+      All k recommendations are conditional on R=50. The Nikiforov 2009 model
+      is formally valid for R >= 100 lattice parameters, so R=50 is an
+      extrapolation region. Universality of k across R requires multi-radius
+      ablation (blocked on data for R >= 100 from advisor).
     k_justification: "data/crystal/analysis/k_selection_justification.md"
     k_criteria:
-      elbow: "first plausible elbow / 2nd-derivative sign change around k=8"
-      davies_bouldin: "early local minimum around k=8, though DB keeps improving for larger k"
-      physical: "k=8 used as lower-bound compromise; physically motivated alternative is k≈20"
+      theoretical: "Nikiforov 2009 formula (5): k_theory ~= 25-35 families with g >= 1 for R=50"
+      internal_metrics: "Silhouette plateau and DB local minimum in k ∈ [35, 50]"
+      external_metric: "AMI vs Miller keeps growing up to k=50, then saturates"
+      retrieval: "precision@10_miller indistinguishable between k=35 and k=50 (bootstrap CI overlap)"
     metrics_file: "data/crystal/analysis/cluster_optimization_metrics.csv"
     metrics_computed:
       - "Silhouette Score"
@@ -118,13 +127,42 @@ crystal:
       - "Davies-Bouldin Index"
       - "Inertia (Elbow)"
       - "AMI vs Miller labels"
+      - "Min / median cluster size (sanity)"
 
   miller_classification:
     script: "src/crystal/miller_utils.py"
-    families: 9                  # {100},{110},{111},{210},{211},{221},{310},{321},{411}
+    families: 28                 # расширенный набор по рис. 3 [Никифоров и др., 2009]
+    families_core: ["{100}", "{110}", "{111}"]
+    families_extended:
+      - "{210}"
+      - "{211}"
+      - "{221}"
+      - "{310}"
+      - "{311}"
+      - "{320}"
+      - "{321}"
+      - "{322}"
+      - "{331}"
+      - "{332}"
+      - "{410}"
+      - "{411}"
+      - "{421}"
+      - "{430}"
+      - "{431}"
+      - "{432}"
+      - "{433}"
+      - "{441}"
+      - "{510}"
+      - "{511}"
+      - "{521}"
+      - "{530}"
+      - "{531}"
+      - "{541}"
+      - "{711}"
     vicinal_label: "Vicinal/Mixed"
     tolerance_deg: 6.0           # default angular tolerance for family assignment
     method: "vectorized: arccos(max |dot(unit_vec, ref_vecs)|) ≤ tol"
+    reference: "Nikiforov K.A., Egorov N.V., Shen Ch.-Ch., 2009 (рис. 3)"
 
   retrieval:
     script: "src/crystal/retrieve_crystal.py"
@@ -252,13 +290,17 @@ reproducibility:
   random_seeds:
     subset_sampling: 42
     kmeans: 42  # sklearn default
-    numpy_rng: "not globally seeded — TODO: add np.random.seed(42)"
-    torch_rng: "not globally seeded — TODO: add torch.manual_seed(42)"
+    numpy_rng: 42   # set via src/utils/repro.set_global_seed
+    torch_rng: 42   # set via src/utils/repro.set_global_seed
+
+  seed_helper: "src/utils/repro.py"
+  seed_helper_usage: "from src.utils.repro import set_global_seed; set_global_seed(42)"
 
   known_non_determinism:
-    - "CUDA operations (cuDNN non-deterministic by default)"
+    - "CUDA operations (cuDNN non-deterministic by default; reduced via deterministic flag)"
     - "KDTree neighbor ordering in patch_generator when distances are equal"
     - "FAISS IndexFlatIP tie-breaking for equidistant vectors"
+    - "torch.use_deterministic_algorithms(warn_only=True) — some ops still non-deterministic"
 
   colab_training:
     notebook: "notebooks/SimCLR_Colab.ipynb"

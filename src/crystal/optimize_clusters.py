@@ -26,6 +26,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.cluster import MiniBatchKMeans
+
 from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score,
@@ -34,11 +35,9 @@ from sklearn.metrics import (
     normalized_mutual_info_score,
 )
 
-# ---------------------------------------------------------------------------
-# Аналитическая классификация Миллера (единый модуль miller_utils.py)
-# ---------------------------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
-from src.crystal.miller_utils import assign_miller_labels
+from src.utils.repro import set_global_seed  # noqa: E402
+from src.crystal.miller_utils import assign_miller_labels  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +98,9 @@ def build_recommendation_table(metrics_df: pd.DataFrame, near_best_ratio: float)
 
 
 def main(args):
+    used_seed = set_global_seed(args.seed, deterministic_torch=False)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     embeddings_path = Path(args.embeddings_dir) / "crystal_embeddings.npy"
     metadata_path = Path(args.embeddings_dir) / "embeddings_metadata.csv"
     output_dir = Path(args.output_dir)
@@ -137,10 +139,22 @@ def main(args):
 
     for k in k_values:
         print(f"\n--- k = {k} ---")
-        km = MiniBatchKMeans(n_clusters=k, n_init=5, random_state=42, max_iter=200, batch_size=4096)
+        km = MiniBatchKMeans(
+            n_clusters=k,
+            n_init=5,
+            random_state=args.seed,
+            max_iter=200,
+            batch_size=4096,
+        )
         labels = km.fit_predict(embeddings)
 
-        sil = silhouette_score(embeddings, labels, metric="cosine", sample_size=min(10_000, len(embeddings)), random_state=42)
+        sil = silhouette_score(
+            embeddings,
+            labels,
+            metric="cosine",
+            sample_size=min(10_000, len(embeddings)),
+            random_state=args.seed,
+        )
         ch = calinski_harabasz_score(embeddings, labels)
         db = davies_bouldin_score(embeddings, labels)
         inertia = km.inertia_
@@ -149,12 +163,31 @@ def main(args):
         ami = adjusted_mutual_info_score(miller_labels, labels)
         nmi = normalized_mutual_info_score(miller_labels, labels)
 
+        # Sanity: размеры кластеров. При росте k мелкие кластеры делают
+        # Silhouette per-cluster шумным, а per-cluster статистику vs Miller —
+        # ненадёжной. Помечаем k как unreliable, если min size < threshold.
+        cluster_sizes = np.bincount(labels, minlength=k)
+        min_size = int(cluster_sizes.min())
+        median_size = int(np.median(cluster_sizes))
+        max_size = int(cluster_sizes.max())
+        n_small = int((cluster_sizes < args.min_size_threshold).sum())
+        reliable = min_size >= args.min_size_threshold
+
         print(f"  Silhouette = {sil:.4f}")
         print(f"  Calinski-Harabasz = {ch:.1f}")
         print(f"  Davies-Bouldin = {db:.4f}")
         print(f"  Inertia = {inertia:.0f}")
         print(f"  AMI (vs Miller) = {ami:.4f}")
         print(f"  NMI (vs Miller) = {nmi:.4f}")
+        size_suffix = (
+            f"  [WARNING: {n_small} cluster(s) < {args.min_size_threshold}]"
+            if not reliable
+            else ""
+        )
+        print(
+            f"  Cluster sizes: min={min_size}, median={median_size}, max={max_size}"
+            + size_suffix
+        )
 
         rows.append({
             "k": k,
@@ -164,6 +197,11 @@ def main(args):
             "inertia": round(inertia, 0),
             "ami_miller": round(ami, 4),
             "nmi_miller": round(nmi, 4),
+            "min_cluster_size": min_size,
+            "median_cluster_size": median_size,
+            "max_cluster_size": max_size,
+            "n_clusters_below_threshold": n_small,
+            "reliable": reliable,
         })
 
         cluster_assignments[k] = labels
@@ -265,21 +303,51 @@ def main(args):
     # Итоговая рекомендация
     best_idx = norm_df["combined"].idxmax()
     best_k = int(norm_df.loc[best_idx, "k"])
-    near_best_df = norm_df.loc[norm_df["combined"] >= args.near_best_ratio * norm_df["combined"].max()].sort_values("k")
+    near_best_df = norm_df.loc[
+        norm_df["combined"] >= args.near_best_ratio * norm_df["combined"].max()
+    ].sort_values("k")
 
-    print(f"\n{'='*60}")
+    # near-best в пределах reliable-подмножества (min_cluster_size ≥ threshold)
+    reliable_mask = metrics_df["reliable"].to_numpy()
+    reliable_norm = norm_df.loc[reliable_mask]
+    unreliable_ks = metrics_df.loc[~reliable_mask, "k"].astype(int).tolist()
+
+    if len(reliable_norm) > 0:
+        rel_best = reliable_norm["combined"].max()
+        rel_mask = reliable_norm["combined"] >= args.near_best_ratio * rel_best
+        rel_near_best = reliable_norm.loc[rel_mask].sort_values("k")
+        reliable_coarse = int(rel_near_best["k"].min())
+        reliable_fine = int(rel_near_best["k"].max())
+    else:
+        reliable_coarse = reliable_fine = None
+
+    print(f"\n{'='*70}")
     print("РЕКОМЕНДАЦИЯ: не использовать один 'оптимальный' k как абсолютную истину")
-    print(f"  Формальный максимум combined-score: k = {best_k}  (score={norm_df.loc[best_idx, 'combined']:.3f})")
+    print(f"  Формальный максимум combined-score: k = {best_k}  "
+          f"(score={norm_df.loc[best_idx, 'combined']:.3f})")
     print(
         f"  Near-best диапазон (>= {args.near_best_ratio:.0%} от max combined): "
         f"k = {int(near_best_df['k'].min())}..{int(near_best_df['k'].max())}"
     )
     print(f"  Coarse candidate: k = {coarse_k}")
     print(f"  Fine candidate:   k = {fine_k}")
+    if unreliable_ks:
+        print(
+            f"  Unreliable k (min cluster < {args.min_size_threshold}): {unreliable_ks}"
+        )
+        if reliable_coarse is not None:
+            print(
+                f"  Near-best среди reliable: k = {reliable_coarse}..{reliable_fine}"
+            )
     print("  Интерпретация:")
     print("    - coarse candidate: минимальная разумная детализация без лишнего дробления")
     print("    - fine candidate:   более физически детализированная сегментация поверхности")
-    print(f"{'='*60}")
+    print(
+        "    - для сравнения k внутри near-best используйте bootstrap CI\n"
+        "      (retrieve_crystal.py --bootstrap): пересечение CI по precision@K_miller\n"
+        "      означает, что разница не статистически значима."
+    )
+    print(f"{'='*70}")
 
 
 if __name__ == "__main__":
@@ -311,6 +379,18 @@ if __name__ == "__main__":
         type=float,
         default=0.95,
         help="Порог near-best диапазона относительно максимального combined-score",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Global seed for reproducibility (MiniBatchKMeans, silhouette sampling)",
+    )
+    parser.add_argument(
+        "--min_size_threshold",
+        type=int,
+        default=50,
+        help="Minimal cluster size below which per-cluster metrics are marked unreliable",
     )
 
     args = parser.parse_args()

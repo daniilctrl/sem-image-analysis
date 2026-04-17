@@ -37,6 +37,7 @@ import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from src.crystal.miller_utils import assign_miller_labels, FAMILY_NAMES
+from src.utils.repro import set_global_seed
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,80 @@ def run_crystal_retrieval(
 
 
 # ---------------------------------------------------------------------------
+# Bootstrap confidence intervals
+# ---------------------------------------------------------------------------
+
+def bootstrap_metric_ci(
+    values: np.ndarray,
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> tuple[float, float, float]:
+    """95% percentile bootstrap CI для среднего по выборке query-атомов.
+
+    Без CI сравнение «precision@K_miller у k=35 и k=50 практически одинаков»
+    остаётся голословным: неизвестно, Δ = 0.002 ± 0.01 (неразличимо) или
+    Δ = 0.002 ± 0.0001 (отличимо, но мало). CI превращает голословность
+    в статистически строгое утверждение.
+
+    Метод: percentile bootstrap (Efron 1979) — повторное выборочное
+    усреднение с возвращением. Это стандартный способ для метрик retrieval
+    при отсутствии параметрических предположений о распределении.
+
+    Аргументы:
+        values: np.ndarray формы (N,) с per-query метриками (precision@K).
+        n_bootstrap: число bootstrap-итераций (1000 — минимум для 95% CI).
+        confidence: уровень доверия (0.95 по умолчанию).
+        seed: фиксация RNG для воспроизводимости CI.
+
+    Возвращает:
+        (mean, lo, hi) — точечная оценка и границы percentile CI.
+    """
+    if len(values) == 0:
+        return (float("nan"), float("nan"), float("nan"))
+
+    rng = np.random.default_rng(seed)
+    n = len(values)
+    boot_means = np.empty(n_bootstrap, dtype=np.float64)
+    for i in range(n_bootstrap):
+        idx = rng.integers(0, n, size=n)
+        boot_means[i] = values[idx].mean()
+
+    alpha = 1.0 - confidence
+    lo = float(np.percentile(boot_means, 100.0 * alpha / 2.0))
+    hi = float(np.percentile(boot_means, 100.0 * (1.0 - alpha / 2.0)))
+    return (float(values.mean()), lo, hi)
+
+
+def compute_bootstrap_summary(
+    results_df: pd.DataFrame,
+    K: int,
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Применяет bootstrap CI ко всем ключевым метрикам retrieval."""
+    metric_cols = [
+        f"cluster_coherence@{K}",
+        f"precision@{K}_miller",
+        f"mean_similarity@{K}",
+    ]
+    rows = []
+    for col in metric_cols:
+        vals = results_df[col].to_numpy(dtype=np.float64)
+        mean, lo, hi = bootstrap_metric_ci(vals, n_bootstrap, confidence, seed)
+        rows.append({
+            "metric": col,
+            "mean": round(mean, 4),
+            f"ci_lo ({int(confidence*100)}%)": round(lo, 4),
+            f"ci_hi ({int(confidence*100)}%)": round(hi, 4),
+            "ci_half_width": round((hi - lo) / 2.0, 4),
+            "n_queries": int(len(vals)),
+        })
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
 # Вывод и визуализация
 # ---------------------------------------------------------------------------
 
@@ -258,6 +333,9 @@ def plot_retrieval_results(results_df: pd.DataFrame, K: int, output_path: Path):
 # ---------------------------------------------------------------------------
 
 def main(args):
+    used_seed = set_global_seed(args.seed, deterministic_torch=False)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     _root = Path(__file__).resolve().parents[2]
 
     # 1. Загрузка
@@ -303,6 +381,29 @@ def main(args):
     plot_path = output_dir / f"crystal_retrieval_K{args.K}.png"
     plot_retrieval_results(results, args.K, plot_path)
 
+    # 5. Bootstrap CI (по умолчанию включён, можно отключить --no-bootstrap)
+    if args.bootstrap:
+        boot_df = compute_bootstrap_summary(
+            results,
+            K=args.K,
+            n_bootstrap=args.n_bootstrap,
+            confidence=args.confidence,
+            seed=args.seed,
+        )
+        print(f"\n{'='*60}")
+        print(f"  Bootstrap {int(args.confidence*100)}% CI "
+              f"({args.n_bootstrap} iterations, seed={args.seed})")
+        print(f"{'='*60}")
+        print(boot_df.to_string(index=False))
+        boot_path = output_dir / f"crystal_retrieval_K{args.K}_bootstrap.csv"
+        boot_df.to_csv(boot_path, index=False)
+        print(f"\nBootstrap summary saved: {boot_path}")
+        print(
+            "\n  NOTE: Overlapping CI for precision@K_miller between two k values\n"
+            "        means the difference is NOT statistically significant — use\n"
+            "        this when comparing k=35 vs k=50 rather than raw means."
+        )
+
 
 if __name__ == "__main__":
     _root = Path(__file__).resolve().parents[2]
@@ -321,5 +422,15 @@ if __name__ == "__main__":
                         help="Number of random query patches (0 = all, but slow for 150K)")
     parser.add_argument("--query_idx", type=int, default=-1,
                         help="Specific patch index to query (-1 = use n_queries)")
+    parser.add_argument("--bootstrap", action="store_true", default=True,
+                        help="Compute bootstrap 95% CI for retrieval metrics (default: True)")
+    parser.add_argument("--no-bootstrap", dest="bootstrap", action="store_false",
+                        help="Disable bootstrap CI computation")
+    parser.add_argument("--n_bootstrap", type=int, default=1000,
+                        help="Number of bootstrap iterations (default: 1000)")
+    parser.add_argument("--confidence", type=float, default=0.95,
+                        help="CI confidence level (default: 0.95)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global + bootstrap seed for reproducibility")
     args = parser.parse_args()
     main(args)
