@@ -13,8 +13,13 @@ from src.models.deep_clustering.augmentations import get_simclr_transforms
 from src.models.deep_clustering.dataset import ContrastiveLearningDataset
 from src.models.deep_clustering.model import SimCLR
 from src.models.deep_clustering.loss import NTXentLoss
+from src.utils.repro import set_global_seed, seed_worker, make_generator
+
 
 def train(args):
+    used_seed = set_global_seed(args.seed)
+    print(f"[repro] Global seed fixed: {used_seed}")
+
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Training SimCLR on {device}...")
     
@@ -28,12 +33,14 @@ def train(args):
     dataset = ContrastiveLearningDataset(df, args.data_dir, transforms)
     
     loader = DataLoader(
-        dataset, 
-        batch_size=args.batch_size, 
-        shuffle=True, 
-        num_workers=args.workers, 
-        pin_memory=True, 
-        drop_last=True
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.workers,
+        pin_memory=True,
+        drop_last=True,
+        worker_init_fn=seed_worker,
+        generator=make_generator(args.seed),
     )
     
     # 2. Model, Loss, Optimizer
@@ -105,6 +112,8 @@ if __name__ == "__main__":
     parser.add_argument("--subset", type=int, default=0) # Разрешить брать срез (например 1000 шт для тестов)
     parser.add_argument("--resume", type=str, default="") # Путь к .pth чекпоинту для продолжения обучения
     parser.add_argument("--start_epoch", type=int, default=0) # С какой эпохи продолжать нумерацию
-    
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Global seed for reproducibility (torch/numpy/random/cudnn)")
+
     args = parser.parse_args()
     train(args)
