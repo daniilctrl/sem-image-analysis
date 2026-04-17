@@ -68,6 +68,7 @@ from src.evaluation.eval_utils import (  # noqa: E402
     load_aligned_data, l2_normalize,
 )
 from src.utils.repro import set_global_seed  # noqa: E402
+from src.utils.stats import bootstrap_metric_ci  # noqa: E402
 
 
 def load_sft_annotations(
@@ -149,15 +150,28 @@ def run_linear_probe_cv(
         all_y_true.extend(y_te.tolist())
         all_y_pred.extend(y_pred.tolist())
 
-    # Aggregated stats
+    # Aggregated stats + bootstrap CI по fold-accuracies (грубая оценка:
+    # K фолдов — маленькая выборка, но даёт интервал). Более строгий
+    # вариант — bootstrap per-sample prediction accuracy, но для защиты
+    # и summary-таблицы достаточно per-fold.
     fold_df = pd.DataFrame(per_fold)
+    _, acc_lo, acc_hi = bootstrap_metric_ci(
+        fold_df["accuracy"].to_numpy(), n_bootstrap=1000, seed=seed,
+    )
+    _, f1_lo, f1_hi = bootstrap_metric_ci(
+        fold_df["macro_f1"].to_numpy(), n_bootstrap=1000, seed=seed,
+    )
     aggregate = {
         "mean_accuracy": round(float(fold_df["accuracy"].mean()), 4),
         "std_accuracy": round(float(fold_df["accuracy"].std(ddof=1)), 4),
+        "ci_lo_accuracy": round(acc_lo, 4),
+        "ci_hi_accuracy": round(acc_hi, 4),
         "mean_balanced_accuracy": round(float(fold_df["balanced_accuracy"].mean()), 4),
         "std_balanced_accuracy": round(float(fold_df["balanced_accuracy"].std(ddof=1)), 4),
         "mean_macro_f1": round(float(fold_df["macro_f1"].mean()), 4),
         "std_macro_f1": round(float(fold_df["macro_f1"].std(ddof=1)), 4),
+        "ci_lo_macro_f1": round(f1_lo, 4),
+        "ci_hi_macro_f1": round(f1_hi, 4),
     }
 
     return {
@@ -216,12 +230,13 @@ def run_for_model(
         C=args.C, max_iter=args.max_iter,
     )
 
-    print(f"    accuracy = {result['aggregate']['mean_accuracy']:.4f} "
-          f"+/- {result['aggregate']['std_accuracy']:.4f}")
-    print(f"    balanced = {result['aggregate']['mean_balanced_accuracy']:.4f} "
-          f"+/- {result['aggregate']['std_balanced_accuracy']:.4f}")
-    print(f"    macro-F1 = {result['aggregate']['mean_macro_f1']:.4f} "
-          f"+/- {result['aggregate']['std_macro_f1']:.4f}")
+    agg = result["aggregate"]
+    print(f"    accuracy = {agg['mean_accuracy']:.4f} "
+          f"[{agg['ci_lo_accuracy']:.4f}, {agg['ci_hi_accuracy']:.4f}] (95% CI)")
+    print(f"    balanced = {agg['mean_balanced_accuracy']:.4f} "
+          f"+/- {agg['std_balanced_accuracy']:.4f}")
+    print(f"    macro-F1 = {agg['mean_macro_f1']:.4f} "
+          f"[{agg['ci_lo_macro_f1']:.4f}, {agg['ci_hi_macro_f1']:.4f}] (95% CI)")
 
     # Save per-fold table
     safe_name = model_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
