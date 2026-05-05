@@ -62,9 +62,15 @@ def build_faiss_index(embeddings: np.ndarray):
             "faiss-cpu required for retrieval. Install: pip install faiss-cpu"
         )
 
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    # Делаем нормализацию in-place, чтобы не удваивать пик памяти при
+    # больших размерностях (flatten 5120-D × 150k = 3 GB; копия → OOM).
+    if embeddings.dtype != np.float32:
+        normalized = embeddings.astype("float32", copy=True)
+    else:
+        normalized = np.array(embeddings, copy=True)
+    norms = np.linalg.norm(normalized, axis=1, keepdims=True)
     norms[norms == 0] = 1
-    normalized = (embeddings / norms).astype("float32")
+    normalized /= norms
     index = faiss.IndexFlatIP(normalized.shape[1])
     index.add(normalized)
     return index, normalized
@@ -82,6 +88,7 @@ def run_crystal_retrieval(
     query_indices: list | None = None,
     cluster_col: str = "cluster_8",
     seed: int = 42,
+    spatial_split_deg: float = 0.0,
 ):
     """Проводит retrieval-тест на Crystal-эмбеддингах.
 
@@ -93,6 +100,13 @@ def run_crystal_retrieval(
         query_indices: конкретные индексы для query (приоритет над n_queries).
         cluster_col: столбец с метками кластеров.
         seed: для воспроизводимости выборки.
+        spatial_split_deg: при > 0 исключать соседей с угловым расстоянием
+            < этого порога от query (по (X,Y,Z) на полусфере). Это убирает
+            тривиальную геометрическую близость: Miller-семейство задаётся
+            углом к крист. осям с допуском 6°, поэтому соседи в радиусе
+            < 6° по построению попадают в то же семейство, и P@K_miller
+            на них не отражает работу обученного пространства. Разумный
+            порог 12-15°: вдвое больше Miller-tolerance.
 
     Возвращает:
         pd.DataFrame — результаты: per-query precision + similarity.
@@ -115,52 +129,79 @@ def run_crystal_retrieval(
 
     # Определяем query set
     if query_indices is not None:
-        queries = query_indices
+        queries = np.asarray(query_indices)
     elif n_queries > 0 and n_queries < len(df):
         rng = np.random.default_rng(seed)
         queries = rng.choice(len(df), size=n_queries, replace=False)
     else:
         queries = np.arange(len(df))
 
-    print(f"Running retrieval: {len(queries)} queries, K={K}")
+    # При spatial split нормируем (X,Y,Z) и считаем cos(theta) через dot.
+    # fetch_K увеличиваем на размер сферической шапки + запас, чтобы после
+    # фильтра оставалось ≥ K кандидатов даже при сильной геом. близости.
+    use_spatial = spatial_split_deg > 0
+    if use_spatial:
+        xyz_norm = xyz / np.linalg.norm(xyz, axis=1, keepdims=True)
+        cos_thresh = float(np.cos(np.deg2rad(spatial_split_deg)))
+        # Доля поверхности полусферы внутри шапки = (1 - cos(theta)) / 2;
+        # верхняя граница на число патчей в шапке любой точки.
+        cap_fraction = (1.0 - cos_thresh) / 2.0
+        cap_size_est = int(np.ceil(cap_fraction * len(df) * 2))  # запас x2
+        fetch_K = min(K + cap_size_est + 64, len(df))
+    else:
+        fetch_K = K + 1  # +1 на self
 
-    # Batch FAISS search (гораздо быстрее, чем поштучно)
+    print(f"Running retrieval: {len(queries)} queries, K={K}, "
+          f"spatial_split={spatial_split_deg}°, fetch_K={fetch_K}")
+
+    # Batch FAISS search
     query_embs = normed[queries]
-    sims_all, indices_all = index.search(query_embs, K + 1)  # +1 для self
+    sims_all, indices_all = index.search(query_embs, fetch_K)
+
+    # numpy-кеш колонок для скорости
+    cluster_arr = df[cluster_col].to_numpy()
+    miller_arr = df["miller_label"].to_numpy()
+    fam_arr = df["miller_family"].to_numpy()
 
     results = []
+    skipped = 0
     for i, q_idx in enumerate(queries):
-        q_cluster = df.iloc[q_idx][cluster_col]
-        q_miller = df.iloc[q_idx]["miller_label"]
+        q_cluster = cluster_arr[q_idx]
+        q_miller = miller_arr[q_idx]
 
-        # Убираем self из результатов
-        ret_sims = []
-        ret_same_cluster = []
-        ret_same_miller = []
-        count = 0
+        cand_ids = indices_all[i]
+        cand_sims = sims_all[i]
 
-        for sim, ret_idx in zip(sims_all[i], indices_all[i]):
-            if ret_idx == q_idx:
-                continue
-            ret_sims.append(float(sim))
-            ret_same_cluster.append(int(df.iloc[ret_idx][cluster_col] == q_cluster))
-            ret_same_miller.append(int(df.iloc[ret_idx]["miller_label"] == q_miller))
-            count += 1
-            if count >= K:
-                break
+        # self-фильтр
+        mask = cand_ids != q_idx
 
-        if count < K:
+        # spatial фильтр: исключаем кандидатов в угловом радиусе < threshold
+        if use_spatial:
+            q_dir = xyz_norm[q_idx]
+            cand_dirs = xyz_norm[cand_ids]
+            cos_to_q = cand_dirs @ q_dir
+            mask = mask & (cos_to_q < cos_thresh)
+
+        kept_ids = cand_ids[mask][:K]
+        if len(kept_ids) < K:
+            skipped += 1
             continue
+        kept_sims = cand_sims[mask][:K]
+
+        ret_same_cluster = (cluster_arr[kept_ids] == q_cluster).astype(int)
+        ret_same_miller = (miller_arr[kept_ids] == q_miller).astype(int)
 
         results.append({
             "query_idx": int(q_idx),
             "cluster": int(q_cluster),
-            "miller_family": df.iloc[q_idx]["miller_family"],
-            f"cluster_coherence@{K}": sum(ret_same_cluster) / K,
-            f"precision@{K}_miller": sum(ret_same_miller) / K,
-            f"mean_similarity@{K}": np.mean(ret_sims),
+            "miller_family": fam_arr[q_idx],
+            f"cluster_coherence@{K}": float(ret_same_cluster.sum()) / K,
+            f"precision@{K}_miller": float(ret_same_miller.sum()) / K,
+            f"mean_similarity@{K}": float(kept_sims.mean()),
         })
 
+    if skipped:
+        print(f"WARN: skipped {skipped} queries (insufficient candidates after filter)")
     return pd.DataFrame(results)
 
 
@@ -320,9 +361,9 @@ def main(args):
 
     _root = Path(__file__).resolve().parents[2]
 
-    # 1. Загрузка
-    emb_path = Path(args.embeddings_dir) / "crystal_embeddings.npy"
-    meta_path = Path(args.embeddings_dir) / "embeddings_metadata.csv"
+    # 1. Загрузка. Если emb_path не задан явно — берём дефолт из embeddings_dir.
+    emb_path = Path(args.emb_path) if args.emb_path else Path(args.embeddings_dir) / "crystal_embeddings.npy"
+    meta_path = Path(args.meta_path) if args.meta_path else Path(args.embeddings_dir) / "embeddings_metadata.csv"
 
     print(f"Loading embeddings: {emb_path}")
     embeddings = np.load(emb_path)
@@ -347,20 +388,26 @@ def main(args):
         query_indices=query_indices,
         cluster_col=cluster_col,
         seed=42,
+        spatial_split_deg=args.spatial_split_deg,
     )
 
     # 3. Сводка
     print_summary(results, args.K)
 
-    # 4. Сохранение
+    # 4. Сохранение. Если задан --model_name, добавляем суффикс к именам
+    # артефактов, чтобы запуски разных baseline'ов не перетирали друг друга.
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    csv_path = output_dir / f"crystal_retrieval_K{args.K}.csv"
+    suffix = f"_{args.model_name}" if args.model_name else ""
+    if args.spatial_split_deg > 0:
+        suffix += f"_split{int(args.spatial_split_deg)}deg"
+
+    csv_path = output_dir / f"crystal_retrieval_K{args.K}{suffix}.csv"
     results.to_csv(csv_path, index=False)
     print(f"\nResults saved: {csv_path}")
 
-    plot_path = output_dir / f"crystal_retrieval_K{args.K}.png"
+    plot_path = output_dir / f"crystal_retrieval_K{args.K}{suffix}.png"
     plot_retrieval_results(results, args.K, plot_path)
 
     # 5. Bootstrap CI (по умолчанию включён, можно отключить --no-bootstrap)
@@ -377,7 +424,7 @@ def main(args):
               f"({args.n_bootstrap} iterations, seed={args.seed})")
         print(f"{'='*60}")
         print(boot_df.to_string(index=False))
-        boot_path = output_dir / f"crystal_retrieval_K{args.K}_bootstrap.csv"
+        boot_path = output_dir / f"crystal_retrieval_K{args.K}{suffix}_bootstrap.csv"
         boot_df.to_csv(boot_path, index=False)
         print(f"\nBootstrap summary saved: {boot_path}")
         print(
@@ -414,5 +461,18 @@ if __name__ == "__main__":
                         help="CI confidence level (default: 0.95)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Global + bootstrap seed for reproducibility")
+    parser.add_argument("--emb_path", type=str, default=None,
+                        help="Override path to embeddings .npy "
+                             "(default: <embeddings_dir>/crystal_embeddings.npy)")
+    parser.add_argument("--meta_path", type=str, default=None,
+                        help="Override path to metadata CSV "
+                             "(default: <embeddings_dir>/embeddings_metadata.csv)")
+    parser.add_argument("--model_name", type=str, default="",
+                        help="Suffix added to output filenames (e.g. 'simclr', 'flatten')")
+    parser.add_argument("--spatial_split_deg", type=float, default=0.0,
+                        help="Angular distance threshold (deg) for spatial split. "
+                             "Neighbors within this radius from query are excluded. "
+                             "Recommended: 12-15° (twice the Miller tolerance of 6°). "
+                             "0 = disabled (default).")
     args = parser.parse_args()
     main(args)

@@ -1,0 +1,4 @@
+metric,mean,ci_lo (95%),ci_hi (95%),ci_half_width,n_queries
+cluster_coherence@10,0.8677,0.8615,0.8737,0.0061,5000
+precision@10_miller,0.801,0.794,0.8076,0.0068,5000
+mean_similarity@10,0.9984,0.9983,0.9985,0.0001,5000
