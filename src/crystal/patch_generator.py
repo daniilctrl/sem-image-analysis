@@ -247,66 +247,80 @@ def visualize_sample_patches(
     
     n_cols = 4
     n_rows = (len(indices) + n_cols - 1) // n_cols
-    
+
     # Визуализация: среднее по каналам (как «серый» снимок)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 4 * n_rows))
     axes = axes.flatten()
-    
+
     for i, idx in enumerate(indices):
         patch = patches[idx]  # (5, 32, 32)
         # Среднее по 5 каналам для визуализации
         gray = patch.mean(axis=0)
-        
+
         row = meta_df.iloc[idx]
         ax = axes[i]
         ax.imshow(gray, cmap="gray_r", vmin=0, vmax=1)
         ax.set_title(
-            f"Atom #{int(row['atom_idx'])}\n"
+            f"Атом №{int(row['atom_idx'])}\n"
             f"({row['X']:.0f}, {row['Y']:.0f}, {row['Z']:.0f})\n"
             f"gs={row['grayscale']:.3f}",
-            fontsize=8,
+            fontsize=12,
         )
         ax.axis("off")
-    
+
     # Скрыть пустые
     for i in range(len(indices), len(axes)):
         axes[i].axis("off")
-    
-    plt.suptitle("Sample Crystal Patches (mean of 5 channels)", fontsize=14, fontweight="bold")
+
+    plt.suptitle("Примеры патчей кристаллической поверхности "
+                 "(среднее по 5 каналам)",
+                 fontsize=18, fontweight="bold")
     plt.tight_layout()
-    
+
     path = output_path / "sample_patches.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"  Saved sample patches: {path}")
-    
-    # 5-канальная визуализация одного патча
-    fig, axes = plt.subplots(1, 6, figsize=(24, 4))
+
+    # 5-канальная визуализация одного патча.
+    # Раскладка 2x3 (вместо 1x6): на странице A4 патчи получаются крупнее
+    # и квадратными, подписи к каналам читаются без увеличения.
+    # figsize выбран так, чтобы соотношение сторон (~1.67:1) не делало
+    # картинку слишком высокой — иначе LaTeX переносит её на отдельную
+    # float-страницу. Внутренние отступы между suptitle / подписями
+    # каналов / самими патчами / рядами — заданы явно через tight_layout
+    # и subplots_adjust, чтобы избежать «слипшегося» вида.
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    axes_flat = axes.flatten()
     idx = indices[0]
     patch = patches[idx]
     channel_names = ["n1/8", "n2/6", "n3/12", "n4/24", "n5/8"]
-    
+
     for ch in range(5):
-        axes[ch].imshow(patch[ch], cmap="viridis", vmin=0, vmax=1)
-        axes[ch].set_title(channel_names[ch], fontsize=11)
-        axes[ch].axis("off")
-    
+        axes_flat[ch].imshow(patch[ch], cmap="viridis", vmin=0, vmax=1)
+        axes_flat[ch].set_title(channel_names[ch], fontsize=22, pad=10)
+        axes_flat[ch].axis("off")
+
     # Композит RGB (первые 3 канала)
     rgb = np.stack([patch[0], patch[1], patch[2]], axis=2)
-    axes[5].imshow(np.clip(rgb, 0, 1))
-    axes[5].set_title("RGB (n1, n2, n3)", fontsize=11)
-    axes[5].axis("off")
-    
+    axes_flat[5].imshow(np.clip(rgb, 0, 1))
+    axes_flat[5].set_title("RGB (n1, n2, n3)", fontsize=22, pad=10)
+    axes_flat[5].axis("off")
+
     row = meta_df.iloc[idx]
     plt.suptitle(
-        f"Patch channels — Atom #{int(row['atom_idx'])} at ({row['X']:.0f}, {row['Y']:.0f}, {row['Z']:.0f})",
-        fontsize=13,
+        f"Каналы патча — атом №{int(row['atom_idx'])} "
+        f"в точке ({row['X']:.0f}, {row['Y']:.0f}, {row['Z']:.0f})",
+        fontsize=20,
         fontweight="bold",
+        y=0.98,
     )
-    plt.tight_layout()
-    
+    # rect=[left, bottom, right, top] оставляет место под suptitle сверху;
+    # h_pad / w_pad дают воздух между рядами и колонками.
+    plt.tight_layout(rect=[0, 0, 1, 0.93], h_pad=4.0, w_pad=2.0)
+
     path = output_path / "patch_channels.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"  Saved channel visualization: {path}")
 
@@ -315,22 +329,39 @@ def main(args):
     used_seed = set_global_seed(args.seed, deterministic_torch=False)
     print(f"[repro] Global seed fixed: {used_seed}")
 
-    print("Loading data...")
-    df = pd.read_parquet(args.parquet_path)
-    print(f"  Loaded {len(df):,} atoms")
-    
-    patches, meta_df = generate_patches(
-        df,
-        num_atoms=args.num_atoms,
-        resolution=args.resolution,
-        window_radius=args.window_radius,
-        search_radius=args.search_radius,
-        output_dir=args.output_dir,
-    )
-    
+    output_path = Path(args.output_dir)
+    patches_npy = output_path / "patches.npy"
+    metadata_csv = output_path / "patches_metadata.csv"
+
+    if args.visualize_only:
+        if not (patches_npy.exists() and metadata_csv.exists()):
+            raise SystemExit(
+                f"--visualize-only указан, но не найдены готовые патчи:\n"
+                f"  {patches_npy}\n  {metadata_csv}\n"
+                f"Запустите без --visualize-only, чтобы сгенерировать."
+            )
+        print(f"Loading existing patches from {patches_npy}...")
+        patches = np.load(patches_npy)
+        meta_df = pd.read_csv(metadata_csv)
+        print(f"  Loaded {len(patches):,} patches "
+              f"(shape={patches.shape}, dtype={patches.dtype})")
+    else:
+        print("Loading data...")
+        df = pd.read_parquet(args.parquet_path)
+        print(f"  Loaded {len(df):,} atoms")
+
+        patches, meta_df = generate_patches(
+            df,
+            num_atoms=args.num_atoms,
+            resolution=args.resolution,
+            window_radius=args.window_radius,
+            search_radius=args.search_radius,
+            output_dir=args.output_dir,
+        )
+
     print("\nGenerating sample visualizations...")
     visualize_sample_patches(patches, meta_df, args.output_dir)
-    
+
     print("\nDone!")
 
 
@@ -345,5 +376,9 @@ if __name__ == "__main__":
     parser.add_argument("--search_radius", type=float, default=15.0, help="3D neighbor search radius (>= window_radius)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Global seed for reproducibility of anchor sampling")
+    parser.add_argument("--visualize-only", action="store_true",
+                        help="Не пересобирать патчи: загрузить существующие "
+                             "patches.npy и patches_metadata.csv из --output_dir "
+                             "и только перерисовать sample/channel картинки")
     args = parser.parse_args()
     main(args)

@@ -1,4 +1,6 @@
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -6,7 +8,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from src.crystal.miller_utils import assign_miller_labels, FAMILY_NAMES
+# Добавляем корень проекта в sys.path при запуске скриптом напрямую
+# (`python src/crystal/analyze_miller_indices.py ...`); такой же приём
+# используется в соседних скриптах patch_generator.py, optimize_clusters.py,
+# retrieve_crystal.py.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+from src.crystal.miller_utils import assign_miller_labels, FAMILY_NAMES  # noqa: E402
 
 def main(args):
     metadata_path = Path(args.embeddings_dir) / "embeddings_metadata.csv"
@@ -42,27 +49,65 @@ def main(args):
     
     crosstab.to_csv(output_dir / "miller_classification_crosstab.csv")
     
+    # Размер figsize и шрифтов масштабируем под число кластеров,
+    # чтобы тепловая карта при k=35 не «слипалась». Высота линейно
+    # растёт от 8 (для k≤10) до 16 (для k≥30).
+    n_rows = int(df[cluster_col].nunique())
+    fig_h = max(8.0, min(16.0, 0.42 * n_rows + 6.0))
+    fig_w = 14.0
+    annot_fs = 10 if n_rows <= 25 else 9
+    label_fs = 14
+    tick_fs = 12
+    title_fs = 15
+
     # 1. Степень чистоты кластера (Из чего на N% состоит кластер?)
     crosstab_plot = pd.crosstab(df[cluster_col], df['miller_family'], normalize='index') * 100
-    
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(crosstab_plot, annot=True, fmt=".1f", cmap="YlGnBu", cbar_kws={'label': '% атомов в Кластере'})
-    plt.title(f"Степень совпадения: ML-кластеры vs Аналитические индексы (допуск {args.tol}°)")
-    plt.ylabel(f"Идентификатор кластера (KMeans)")
-    plt.xlabel("Синтетическое семейство по Миллеру")
+
+    plt.figure(figsize=(fig_w, fig_h))
+    ax = sns.heatmap(
+        crosstab_plot,
+        annot=True,
+        fmt=".1f",
+        cmap="YlGnBu",
+        annot_kws={"size": annot_fs},
+        cbar_kws={'label': '% атомов в Кластере'},
+    )
+    ax.figure.axes[-1].yaxis.label.set_size(label_fs)
+    plt.title(
+        f"Степень совпадения: ML-кластеры и аналитические индексы Миллера "
+        f"(допуск {args.tol}°)",
+        fontsize=title_fs,
+    )
+    plt.ylabel("Идентификатор кластера (KMeans)", fontsize=label_fs)
+    plt.xlabel("Синтетическое семейство по Миллеру", fontsize=label_fs)
+    plt.xticks(fontsize=tick_fs)
+    plt.yticks(fontsize=tick_fs)
     plt.tight_layout()
-    plt.savefig(output_dir / "miller_crosstab_heatmap.png", dpi=150)
+    plt.savefig(output_dir / "miller_crosstab_heatmap.png", dpi=200, bbox_inches="tight")
     plt.close()
-    
-    # 2. Плотность распределения аналитической зоны по кластерам (Где лежат атомы из зоны {110}?)
+
+    # 2. Плотность распределения аналитической зоны по кластерам
     crosstab_miller = pd.crosstab(df[cluster_col], df['miller_family'], normalize='columns') * 100
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(crosstab_miller, annot=True, fmt=".1f", cmap="OrRd", cbar_kws={'label': '% аналитической грани распределено в кластер'})
-    plt.title(f"Распределение эталонных аналитических граней по кластерам")
-    plt.ylabel(f"Идентификатор кластера (KMeans)")
-    plt.xlabel("Синтетическое семейство по Миллеру")
+    plt.figure(figsize=(fig_w, fig_h))
+    ax = sns.heatmap(
+        crosstab_miller,
+        annot=True,
+        fmt=".1f",
+        cmap="OrRd",
+        annot_kws={"size": annot_fs},
+        cbar_kws={'label': '% аналитической грани распределено в кластер'},
+    )
+    ax.figure.axes[-1].yaxis.label.set_size(label_fs)
+    plt.title(
+        "Распределение эталонных аналитических граней по кластерам",
+        fontsize=title_fs,
+    )
+    plt.ylabel("Идентификатор кластера (KMeans)", fontsize=label_fs)
+    plt.xlabel("Синтетическое семейство по Миллеру", fontsize=label_fs)
+    plt.xticks(fontsize=tick_fs)
+    plt.yticks(fontsize=tick_fs)
     plt.tight_layout()
-    plt.savefig(output_dir / "miller_composition_heatmap.png", dpi=150)
+    plt.savefig(output_dir / "miller_composition_heatmap.png", dpi=200, bbox_inches="tight")
     plt.close()
     
     print(f"\nГотово. Матрицы сохранены в {output_dir}")

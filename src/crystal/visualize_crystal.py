@@ -24,6 +24,9 @@ import umap
 
 
 # ─── Палитра кластеров ───────────────────────────────────────────────
+# Для небольшого числа кластеров (≤20) используется ручная палитра
+# контрастных цветов. Для больших n_clusters добавляются качественные
+# matplotlib-палитры tab20b и tab20c — суммарно до 60 различимых цветов.
 CLUSTER_PALETTE = [
     "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
     "#42d4f4", "#f032e6", "#bfef45", "#fabed4", "#469990",
@@ -32,20 +35,57 @@ CLUSTER_PALETTE = [
 ]
 
 
+def _rgb_to_hex(rgb_tuple) -> str:
+    r, g, b = (int(round(c * 255)) for c in rgb_tuple[:3])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def get_colors(n_clusters: int):
-    """Возвращает список цветов для n кластеров."""
-    return CLUSTER_PALETTE[:n_clusters]
+    """Возвращает список цветов для n кластеров.
+
+    До 20 кластеров включительно — ручная палитра CLUSTER_PALETTE.
+    Свыше 20 — добавляем tab20b и tab20c (matplotlib qualitative).
+    Для n_clusters > 60 используем циклическую hsv-палитру.
+    """
+    if n_clusters <= len(CLUSTER_PALETTE):
+        return list(CLUSTER_PALETTE[:n_clusters])
+
+    # Совместимость со старым API matplotlib<3.7 и новым ≥3.7.
+    try:
+        get_cmap = plt.get_cmap  # современный путь
+    except AttributeError:
+        get_cmap = cm.get_cmap   # legacy
+
+    extended = list(CLUSTER_PALETTE)
+    for cmap_name in ("tab20b", "tab20c"):
+        cmap = get_cmap(cmap_name)
+        for i in range(cmap.N):
+            extended.append(_rgb_to_hex(cmap(i)))
+            if len(extended) >= n_clusters:
+                return extended[:n_clusters]
+
+    # Fallback для очень большого n_clusters: распределённые цвета по HSV.
+    hsv = get_cmap("hsv")
+    remaining = n_clusters - len(extended)
+    for i in range(remaining):
+        extended.append(_rgb_to_hex(hsv(i / max(remaining, 1))))
+    return extended[:n_clusters]
 
 
 # ─── UMAP ─────────────────────────────────────────────────────────────
 def plot_umap(embeddings, labels, n_clusters, output_dir):
-    """UMAP 2D-проекция эмбеддингов, раскрашенная по кластерам."""
+    """UMAP 2D-проекция эмбеддингов, раскрашенная по кластерам.
+
+    Под отчёт по практике/ВКР: подняты размеры шрифтов и dpi, увеличен
+    figsize. Имя файла — на латинице (русские символы в имени плохо
+    подключаются через \\includegraphics в LaTeX).
+    """
     print("Построение UMAP...")
     reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1, metric="cosine")
     umap_2d = reducer.fit_transform(embeddings)
 
     colors = get_colors(n_clusters)
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(15, 11))
 
     for cluster_id in range(n_clusters):
         mask = labels == cluster_id
@@ -53,17 +93,25 @@ def plot_umap(embeddings, labels, n_clusters, output_dir):
             umap_2d[mask, 0], umap_2d[mask, 1],
             c=colors[cluster_id],
             label=f"Кластер {cluster_id} ({mask.sum():,})",
-            s=8, alpha=0.7, edgecolors="none",
+            s=10, alpha=0.7, edgecolors="none",
         )
 
-    ax.set_title(f"UMAP эмбеддингов кристалла — {n_clusters} кластеров", fontsize=14)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", markerscale=3, fontsize=10)
-    ax.set_xlabel("UMAP-1")
-    ax.set_ylabel("UMAP-2")
+    ax.set_title(
+        f"UMAP-проекция эмбеддингов кристалла — {n_clusters} кластеров",
+        fontsize=20, pad=14,
+    )
+    ax.legend(
+        bbox_to_anchor=(1.02, 1), loc="upper left",
+        markerscale=3, fontsize=12, frameon=True,
+    )
+    ax.set_xlabel("UMAP-1", fontsize=16)
+    ax.set_ylabel("UMAP-2", fontsize=16)
+    ax.tick_params(axis="both", labelsize=13)
+    ax.grid(True, alpha=0.2)
     plt.tight_layout()
 
-    path = output_dir / f"umap_{n_clusters}кластеров.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
+    path = output_dir / f"umap_clusters_k{n_clusters}.png"
+    plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"  Сохранено: {path}")
 
@@ -207,30 +255,45 @@ def plot_mollweide(meta_df, labels, n_clusters, output_dir):
 
 # ─── Статические 3D виды (matplotlib) ─────────────────────────────────
 def plot_3d_static(meta_df, labels, n_clusters, output_dir):
-    """Статические 3D-виды с крупными точками."""
+    """Статические 3D-виды полусферы с раскраской по кластерам.
+
+    Под отчёт по практике/ВКР: подняты шрифты и dpi, увеличен figsize,
+    имена файлов — на латинице (русские символы плохо подключаются
+    через \\includegraphics в LaTeX).
+    """
     colors = get_colors(n_clusters)
     atom_colors = [colors[l] for l in labels]
 
-    for elev, azim, name in [(30, 45, "перспектива"), (90, 0, "сверху"), (0, 0, "сбоку")]:
-        fig = plt.figure(figsize=(14, 10))
+    views = [
+        (30, 45, "перспектива",  "perspective"),
+        (90, 0,  "сверху",       "top"),
+        (0,  0,  "сбоку",         "side"),
+    ]
+
+    for elev, azim, name_ru, name_en in views:
+        fig = plt.figure(figsize=(15, 12))
         ax = fig.add_subplot(111, projection="3d")
 
         ax.scatter(
             meta_df["X"], meta_df["Y"], meta_df["Z"],
             c=atom_colors,
-            s=2.0,
-            alpha=0.8,
+            s=2.5,
+            alpha=0.85,
             depthshade=False,
         )
 
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
-        ax.set_title(f"Поверхность кристалла — {n_clusters} кластеров ({name})", fontsize=13)
+        ax.set_xlabel("X", fontsize=14, labelpad=10)
+        ax.set_ylabel("Y", fontsize=14, labelpad=10)
+        ax.set_zlabel("Z", fontsize=14, labelpad=10)
+        ax.set_title(
+            f"Поверхность кристалла — {n_clusters} кластеров ({name_ru})",
+            fontsize=18, pad=18,
+        )
+        ax.tick_params(axis="both", labelsize=11)
         ax.view_init(elev=elev, azim=azim)
 
-        path = output_dir / f"surface_{n_clusters}кл_{name}.png"
-        plt.savefig(path, dpi=150, bbox_inches="tight")
+        path = output_dir / f"surface_clusters_k{n_clusters}_{name_en}.png"
+        plt.savefig(path, dpi=200, bbox_inches="tight")
         plt.close()
         print(f"  Сохранено: {path}")
 
@@ -258,8 +321,8 @@ def plot_cluster_distribution(meta_df, labels, n_clusters, output_dir):
     plt.suptitle(f"Распределение — {n_clusters} кластеров", fontsize=14, fontweight="bold")
     plt.tight_layout()
 
-    path = output_dir / f"распределение_{n_clusters}кл.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
+    path = output_dir / f"cluster_distribution_k{n_clusters}.png"
+    plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"  Сохранено: {path}")
 

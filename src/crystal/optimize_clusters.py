@@ -224,81 +224,99 @@ def main(args):
     # ---------------------------------------------------------------------------
     # Визуализация
     # ---------------------------------------------------------------------------
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    # Под отчёт по практике/ВКР: 3-уровневая сетка через GridSpec —
+    #   ряд 1: Silhouette / Calinski–Harabasz
+    #   ряд 2: Davies–Bouldin / Метод локтя
+    #   ряд 3: AMI vs Miller (на всю ширину — ключевая внешняя метрика)
+    # Сводная нормализованная таблица сохраняется отдельно в CSV
+    # (cluster_optimization_normalized.csv) и переносится в LaTeX-отчёт
+    # как самостоятельная таблица. Логика расчётов не тронута.
+    import matplotlib.gridspec as gridspec
+
+    title_fs = 18
+    label_fs = 16
+    tick_fs = 13
+    legend_fs = 14
+    suptitle_fs = 22
+
+    fig = plt.figure(figsize=(15, 16))
+    gs = gridspec.GridSpec(
+        3, 2, figure=fig,
+        height_ratios=[1.0, 1.0, 1.0],
+    )
 
     # 1. Silhouette
-    ax = axes[0, 0]
-    ax.plot(metrics_df["k"], metrics_df["silhouette"], "o-", color="#2196F3", linewidth=2)
-    ax.set_xlabel("Число кластеров k")
-    ax.set_ylabel("Silhouette Score")
-    ax.set_title("Silhouette Score (макс → лучше)")
+    ax = fig.add_subplot(gs[0, 0])
+    ax.plot(metrics_df["k"], metrics_df["silhouette"], "o-", color="#2196F3", linewidth=2.5)
+    ax.set_xlabel("Число кластеров k", fontsize=label_fs)
+    ax.set_ylabel("Silhouette Score", fontsize=label_fs)
+    ax.set_title("Silhouette Score (больше — лучше)", fontsize=title_fs, pad=12)
+    ax.tick_params(axis="both", labelsize=tick_fs)
     ax.grid(True, alpha=0.3)
 
     # 2. Calinski-Harabasz
-    ax = axes[0, 1]
-    ax.plot(metrics_df["k"], metrics_df["calinski_harabasz"], "o-", color="#4CAF50", linewidth=2)
-    ax.set_xlabel("Число кластеров k")
-    ax.set_ylabel("Calinski-Harabasz Index")
-    ax.set_title("Calinski-Harabasz (макс → лучше)")
+    ax = fig.add_subplot(gs[0, 1])
+    ax.plot(metrics_df["k"], metrics_df["calinski_harabasz"], "o-", color="#4CAF50", linewidth=2.5)
+    ax.set_xlabel("Число кластеров k", fontsize=label_fs)
+    ax.set_ylabel("Индекс Calinski–Harabasz", fontsize=label_fs)
+    ax.set_title("Индекс Calinski–Harabasz (больше — лучше)", fontsize=title_fs, pad=12)
+    ax.tick_params(axis="both", labelsize=tick_fs)
     ax.grid(True, alpha=0.3)
 
     # 3. Davies-Bouldin
-    ax = axes[0, 2]
-    ax.plot(metrics_df["k"], metrics_df["davies_bouldin"], "o-", color="#FF9800", linewidth=2)
-    ax.set_xlabel("Число кластеров k")
-    ax.set_ylabel("Davies-Bouldin Index")
-    ax.set_title("Davies-Bouldin (мин → лучше)")
+    ax = fig.add_subplot(gs[1, 0])
+    ax.plot(metrics_df["k"], metrics_df["davies_bouldin"], "o-", color="#FF9800", linewidth=2.5)
+    ax.set_xlabel("Число кластеров k", fontsize=label_fs)
+    ax.set_ylabel("Индекс Davies–Bouldin", fontsize=label_fs)
+    ax.set_title("Индекс Davies–Bouldin (меньше — лучше)", fontsize=title_fs, pad=12)
+    ax.tick_params(axis="both", labelsize=tick_fs)
     ax.grid(True, alpha=0.3)
 
     # 4. Elbow (Inertia)
-    ax = axes[1, 0]
-    ax.plot(metrics_df["k"], metrics_df["inertia"], "o-", color="#9C27B0", linewidth=2)
-    ax.set_xlabel("Число кластеров k")
-    ax.set_ylabel("Inertia")
-    ax.set_title("Elbow Method (инерция)")
+    ax = fig.add_subplot(gs[1, 1])
+    ax.plot(metrics_df["k"], metrics_df["inertia"], "o-", color="#9C27B0", linewidth=2.5)
+    ax.set_xlabel("Число кластеров k", fontsize=label_fs)
+    ax.set_ylabel("Инерция", fontsize=label_fs)
+    ax.set_title("Метод локтя (инерция)", fontsize=title_fs, pad=12)
+    ax.tick_params(axis="both", labelsize=tick_fs)
     ax.grid(True, alpha=0.3)
 
-    # 5. AMI vs Miller
-    ax = axes[1, 1]
-    ax.plot(metrics_df["k"], metrics_df["ami_miller"], "o-", color="#F44336", linewidth=2, label="AMI")
-    ax.plot(metrics_df["k"], metrics_df["nmi_miller"], "s--", color="#E91E63", linewidth=2, label="NMI")
-    ax.set_xlabel("Число кластеров k")
-    ax.set_ylabel("Score")
-    ax.set_title("Согласованность с индексами Миллера")
-    ax.legend()
+    # 5. AMI vs Miller — на всю ширину
+    ax = fig.add_subplot(gs[2, :])
+    ax.plot(metrics_df["k"], metrics_df["ami_miller"], "o-", color="#F44336", linewidth=2.5, label="AMI")
+    ax.plot(metrics_df["k"], metrics_df["nmi_miller"], "s--", color="#E91E63", linewidth=2.5, label="NMI")
+    ax.set_xlabel("Число кластеров k", fontsize=label_fs)
+    ax.set_ylabel("Значение метрики", fontsize=label_fs)
+    ax.set_title("Согласованность с индексами Миллера", fontsize=title_fs, pad=12)
+    ax.legend(fontsize=legend_fs)
+    ax.tick_params(axis="both", labelsize=tick_fs)
     ax.grid(True, alpha=0.3)
 
-    # 6. Сводная нормализованная таблица
-    ax = axes[1, 2]
-    ax.axis("off")
+    # Подготовка нормализованной таблицы (сохраняется в CSV отдельно,
+    # для использования в LaTeX-отчёте как самостоятельная таблица).
     norm_df, coarse_k, fine_k = build_recommendation_table(metrics_df, args.near_best_ratio)
 
-    table_data = norm_df[["k", "sil_norm", "ch_norm", "db_norm", "ami_norm", "combined"]].round(3)
-    table_data.columns = ["k", "Sil↑", "CH↑", "DB↓(inv)", "AMI↑", "Combined"]
-
-    table = ax.table(
-        cellText=table_data.values,
-        colLabels=table_data.columns,
-        cellLoc="center",
-        loc="center",
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.auto_set_column_width(range(len(table_data.columns)))
-
-    ax.set_title(
-        f"Нормализованные метрики\n(coarse={coarse_k}, fine={fine_k}, near-best≥{args.near_best_ratio:.0%})",
-        fontsize=12,
-        fontweight="bold",
-    )
-
-    plt.suptitle("Оптимизация числа кластеров для SimCLR-эмбеддингов", fontsize=14, fontweight="bold")
-    plt.tight_layout()
+    plt.suptitle("Оптимизация числа кластеров для SimCLR-эмбеддингов",
+                 fontsize=suptitle_fs, fontweight="bold", y=0.995)
+    # rect=[left, bottom, right, top] оставляет место под suptitle сверху;
+    # h_pad / w_pad дают воздух между рядами и колонками.
+    plt.tight_layout(rect=[0, 0, 1, 0.96], h_pad=4.0, w_pad=3.0)
 
     plot_path = output_dir / "cluster_optimization_plot.png"
-    plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.savefig(plot_path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"\nГрафик сохранён: {plot_path}")
+
+    # Сводная таблица — отдельным CSV-файлом (для LaTeX).
+    norm_export = norm_df[
+        ["k", "sil_norm", "ch_norm", "db_norm", "ami_norm", "combined"]
+    ].round(3)
+    norm_export.columns = ["k", "Sil_norm", "CH_norm", "DB_inv_norm", "AMI_norm", "Combined"]
+    norm_csv = output_dir / "cluster_optimization_normalized.csv"
+    norm_export.to_csv(norm_csv, index=False)
+    print(f"Нормализованные метрики (для LaTeX): {norm_csv}")
+    print(f"  coarse={coarse_k}, fine={fine_k}, "
+          f"near-best≥{args.near_best_ratio:.0%}")
 
     # Итоговая рекомендация
     best_idx = norm_df["combined"].idxmax()

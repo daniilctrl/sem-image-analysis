@@ -45,7 +45,11 @@ def plot_rgb(df: pd.DataFrame, output_dir: Path, elev: float = 30, azim: float =
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
-    ax.set_title("BCC Hemisphere — RGB Encoding (R=n1/8, G=n2/6, B=n3/12)", fontsize=13)
+    ax.set_title(
+        "Полусфера ОЦК-кристалла — RGB-кодирование "
+        "($R = n_1/8$, $G = n_2/6$, $B = n_3/12$)",
+        fontsize=13,
+    )
     ax.view_init(elev=elev, azim=azim)
 
     path = output_dir / f"surface_rgb_elev{int(elev)}_azim{int(azim)}.png"
@@ -78,7 +82,11 @@ def plot_grayscale(df: pd.DataFrame, output_dir: Path, elev: float = 30, azim: f
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
-    ax.set_title("BCC Hemisphere — Grayscale (1 − n1·n2·n3·n4·n5 / 110592)", fontsize=13)
+    ax.set_title(
+        "Полусфера ОЦК-кристалла — полутоновое кодирование "
+        r"($1 - n_1 \cdot n_2 \cdot n_3 \cdot n_4 \cdot n_5 / 110592$)",
+        fontsize=13,
+    )
     ax.view_init(elev=elev, azim=azim)
 
     path = output_dir / f"surface_gray_elev{int(elev)}_azim{int(azim)}.png"
@@ -136,7 +144,8 @@ def plot_sliding_window(
         ax.view_init(elev=elev, azim=azim)
 
     fig.suptitle(
-        f"Sliding Window — center=({center_x}, {center_y}, {center_z}), R={window_radius}",
+        f"Скользящее окно — центр=({center_x}, {center_y}, {center_z}), "
+        f"$R={window_radius}$",
         fontsize=14,
         fontweight="bold",
     )

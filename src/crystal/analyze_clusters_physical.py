@@ -75,44 +75,44 @@ def main(args):
     if not patches_path.exists():
         print(f"Патчи по пути {patches_path} не найдены. Пропускаю визуализацию примеров.")
         return
-        
+
     print(f"\nЗагрузка патчей для визуализации примеров из: {patches_path}")
-    # Используем mmap_mode="r", чтобы не загружать весь файл в память 
+    # Используем mmap_mode="r", чтобы не загружать весь файл в память
     patches = np.load(patches_path, mmap_mode="r")
-    
+
     n_examples = 6
     clusters = stats.index.tolist()
-    
+
     fig, axes = plt.subplots(len(clusters), n_examples, figsize=(n_examples*2.2, len(clusters)*2.2))
     if len(clusters) == 1:
         axes = [axes]
-        
+
     for i, cluster_id in enumerate(clusters):
         cluster_indices = df[df[cluster_col] == cluster_id].index.values
         # Выбираем случайные примеры (патчи) для данного кластера
         np.random.seed(42)  # чтобы примеры были детерминированы
         sampled_idxs = np.random.choice(cluster_indices, min(n_examples, len(cluster_indices)), replace=False)
-        
+
         for j, p_idx in enumerate(sampled_idxs):
             patch = patches[p_idx] # форма патча: (C, H, W)
             # Рисуем изображение первого канала (n1 - ближайшие соседи)
             img = patch[0]
             ax = axes[i][j]
-            im = ax.imshow(img, cmap="viridis", vmin=0, vmax=1) # отнормировано было от 0 до 1 
-            
+            im = ax.imshow(img, cmap="viridis", vmin=0, vmax=1) # отнормировано было от 0 до 1
+
             if j == 0:
                 ax.set_ylabel(f"Кластер {cluster_id}\n(Размер: {counts[cluster_id]})", fontsize=10, fontweight='bold')
             ax.set_xticks([])
             ax.set_yticks([])
-            
+
     plt.suptitle("Примеры локальных патчей (канал n1) для физической интерпретации кластеров", fontsize=14, y=0.98)
     plt.tight_layout()
-    
+
     # Добавляем общий колорбар справа
     fig.subplots_adjust(right=0.92, top=0.92)
     cbar_ax = fig.add_axes([0.94, 0.15, 0.02, 0.7])
     fig.colorbar(im, cax=cbar_ax, label='Нормированное число соседей n1')
-    
+
     plt.savefig(output_dir / "cluster_patch_examples.png", dpi=200)
     plt.close()
     print(f"Примеры патчей успешно сохранены в: {output_dir / 'cluster_patch_examples.png'}")
@@ -125,6 +125,6 @@ if __name__ == "__main__":
     parser.add_argument("--patch_dir", type=str, default=str(_root / "data" / "crystal" / "patches"))
     parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "crystal" / "analysis"))
     parser.add_argument("--n_clusters", type=int, default=8, help="Номер кластеризации (какую колонку брать из CSV)")
-    
+
     args = parser.parse_args()
     main(args)
