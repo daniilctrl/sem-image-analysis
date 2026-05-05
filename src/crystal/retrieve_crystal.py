@@ -379,8 +379,36 @@ def main(args):
 
     cluster_col = f"cluster_{args.n_clusters}"
 
-    # 2. Retrieval
+    # 2. Retrieval. Если задан --restrict_query_split, ограничиваем
+    # множество query-патчей нужным split'ом из split_csv. Это нужно
+    # для region-holdout: query берём только из test-секторов, а
+    # candidate-pool остаётся полным (модель пытается найти соседа из
+    # train-сектора, который никогда не видела как query во время
+    # обучения). Сами эмбеддинги извлечены на всех 150k патчах.
     query_indices = [args.query_idx] if args.query_idx >= 0 else None
+    if args.restrict_query_split and args.split_csv:
+        split_df = pd.read_csv(args.split_csv)
+        keep = split_df.loc[
+            split_df["split"] == args.restrict_query_split, "patch_idx"
+        ].to_numpy()
+        if query_indices is not None:
+            query_indices = [q for q in query_indices if q in set(keep)]
+        else:
+            # Сначала случайно выбираем n_queries по seed=42 как раньше,
+            # затем фильтруем по split, чтобы порядок остался
+            # воспроизводимым между запусками.
+            rng = np.random.default_rng(42)
+            if args.n_queries > 0:
+                base = rng.choice(len(df), size=min(args.n_queries * 4, len(df)),
+                                  replace=False)
+            else:
+                base = np.arange(len(df))
+            query_indices = [int(i) for i in base if i in set(keep)]
+            if args.n_queries > 0:
+                query_indices = query_indices[:args.n_queries]
+        print(f"  restrict_query_split={args.restrict_query_split}: "
+              f"{len(query_indices)} queries")
+
     results = run_crystal_retrieval(
         embeddings, df,
         K=args.K,
@@ -474,5 +502,13 @@ if __name__ == "__main__":
                              "Neighbors within this radius from query are excluded. "
                              "Recommended: 12-15° (twice the Miller tolerance of 6°). "
                              "0 = disabled (default).")
+    parser.add_argument("--split_csv", type=str, default="",
+                        help="Path to split CSV with patch_idx+split columns. "
+                             "Used together with --restrict_query_split for "
+                             "region-holdout retrieval evaluation.")
+    parser.add_argument("--restrict_query_split", type=str, default="",
+                        help="If set (e.g. 'test'), only patches with this "
+                             "split label are used as queries. The candidate "
+                             "pool stays full. Requires --split_csv.")
     args = parser.parse_args()
     main(args)

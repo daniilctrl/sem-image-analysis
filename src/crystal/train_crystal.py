@@ -42,6 +42,8 @@ def train(args):
         str(patches_path),
         transform=transforms,
         subset=args.subset,
+        split_csv=args.split_csv if args.split_csv else None,
+        split_filter=args.split_filter,
     )
 
     loader = DataLoader(
@@ -162,5 +164,16 @@ if __name__ == "__main__":
     parser.add_argument("--save_every", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42,
                         help="Global seed for reproducibility (torch/numpy/random/cudnn)")
+    parser.add_argument("--split_csv", type=str, default="",
+                        help="Optional CSV with patch_idx+split columns. "
+                             "Restricts SimCLR training to a subset of patches "
+                             "(e.g. region-holdout: train on N hemisphere "
+                             "sectors, hold out the rest for retrieval eval).")
+    parser.add_argument("--split_filter", type=str, default="train",
+                        help="Which split values to keep when --split_csv is set "
+                             "(default: 'train'). Comma-separated for multiple, "
+                             "e.g. 'train,val'.")
     args = parser.parse_args()
+    if args.split_filter and "," in args.split_filter:
+        args.split_filter = [s.strip() for s in args.split_filter.split(",") if s.strip()]
     train(args)
