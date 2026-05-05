@@ -30,10 +30,8 @@ python notebooks/prepare_colab_zip.py --mode crystal
 Получится `crystal_data_v1.zip` (~2.5 МБ). Залить его в Drive:
 `MyDrive/diploma_data/crystal_data_v1.zip`.
 
-`patches.npy` (~2.9 ГБ) предположительно уже в Drive с прошлых
-crystal-runs — путь обычно `MyDrive/diploma_data/crystal/patches.npy`
-или `MyDrive/diploma_data/crystal_patches.npy`. Если нет — собрать zip
-с `--include-patches` и залить отдельно.
+`patches.npy` (~2.9 ГБ) уже в Drive по пути
+`MyDrive/colab_crystal/patches.npy` (с прошлых crystal-runs).
 
 ## Шаг 1. Colab cell — подготовка окружения
 
@@ -59,7 +57,7 @@ else:
 !rm /content/crystal_data_v1.zip
 
 # 3. patches.npy — НЕ копируем (2.9 GB), а симлинком из Drive
-PATCHES_DRIVE = '/content/drive/MyDrive/diploma_data/crystal/patches.npy'   # <-- проверь свой путь
+PATCHES_DRIVE = '/content/drive/MyDrive/colab_crystal/patches.npy'
 PATCHES_LOCAL = f'{PROJ}/data/crystal/patches/patches.npy'
 assert os.path.exists(PATCHES_DRIVE), f"patches.npy not found at {PATCHES_DRIVE} — fix the path"
 os.makedirs(os.path.dirname(PATCHES_LOCAL), exist_ok=True)
