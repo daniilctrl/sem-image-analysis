@@ -30,7 +30,9 @@ def _load_split_indices(split_csv: str, split_filter: str | Iterable[str]) -> np
         )
     wanted = {split_filter} if isinstance(split_filter, str) else set(split_filter)
     mask = df["split"].isin(wanted)
-    indices = df.loc[mask, "patch_idx"].to_numpy()
+    # to_numpy() in some pandas versions returns a read-only view, so we
+    # request a writable copy and then sort in place.
+    indices = df.loc[mask, "patch_idx"].to_numpy(copy=True)
     indices.sort()
     return indices
 
@@ -67,30 +69,36 @@ class CrystalPatchDataset(Dataset):
         # Без этого: 149k × 5 × 32 × 32 × float32 ≈ 3 GB RAM загружается целиком.
         self.patches = np.load(patches_path, mmap_mode='r')  # (N, 5, H, W)
 
+        # Активный набор индексов для __getitem__ — храним отдельно, чтобы
+        # fancy-индексирование не материализовало memmap в RAM (на 100k
+        # патчей это ~2 GB; теряется вся выгода lazy-чтения). Если split
+        # и subset не заданы, _active_idx = arange(N) — оверхед 0.
+        n_total = len(self.patches)
+        active = np.arange(n_total, dtype=np.int64)
+
         if split_csv is not None:
             keep = _load_split_indices(split_csv, split_filter)
-            n_before = len(self.patches)
-            # fancy indexing на mmap создаёт обычный массив в RAM —
-            # это нормально, train-сектора занимают ~2 GB при 100k патчей.
-            self.patches = self.patches[keep]
+            active = np.intersect1d(active, keep, assume_unique=False)
             print(
                 f"CrystalPatchDataset: split_csv={split_csv} filter={split_filter} "
-                f"-> kept {len(self.patches)}/{n_before} patches"
+                f"-> kept {len(active)}/{n_total} patches"
             )
 
-        if subset > 0 and subset < len(self.patches):
+        if subset > 0 and subset < len(active):
             rng = np.random.default_rng(seed)
-            indices = rng.choice(len(self.patches), size=subset, replace=False)
-            self.patches = self.patches[indices]
+            chosen = rng.choice(len(active), size=subset, replace=False)
+            active = active[chosen]
 
+        self._active_idx = active
         self.transform = transform
-        print(f"CrystalPatchDataset: {len(self.patches)} patches, shape={self.patches.shape[1:]}")
-    
+        print(f"CrystalPatchDataset: {len(active)} patches, shape={self.patches.shape[1:]}")
+
     def __len__(self):
-        return len(self.patches)
-    
+        return len(self._active_idx)
+
     def __getitem__(self, idx):
-        patch = torch.from_numpy(self.patches[idx].copy())  # (5, H, W)
+        real_idx = int(self._active_idx[idx])
+        patch = torch.from_numpy(self.patches[real_idx].copy())  # (5, H, W)
         
         if self.transform is not None:
             view1 = self.transform(patch)
