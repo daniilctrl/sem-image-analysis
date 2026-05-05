@@ -87,8 +87,13 @@ def build_sem(root_dir: Path) -> bool:
 
 
 def build_crystal(root_dir: Path, include_patches: bool) -> bool:
+    # data/crystal/splits/ уже под контролем git и приходит через
+    # `git pull`. Если включить его в zip и распаковать ДО pull в Colab,
+    # untracked-файл блокирует merge: «error: untracked working tree
+    # files would be overwritten by merge». Поэтому пакуем только то,
+    # чего в git нет: patches_metadata.csv (9 MB) и опционально
+    # patches.npy (3 GB).
     paths = [
-        root_dir / "data" / "crystal" / "splits",
         root_dir / "data" / "crystal" / "patches" / "patches_metadata.csv",
     ]
     if include_patches:

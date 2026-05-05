@@ -27,8 +27,12 @@
 python notebooks/prepare_colab_zip.py --mode crystal
 ```
 
-Получится `crystal_data_v1.zip` (~2.5 МБ). Залить его в Drive:
-`MyDrive/diploma_data/crystal_data_v1.zip`.
+Получится `crystal_data_v1.zip` (~9 МБ): только `patches_metadata.csv`,
+которого нет в git. Сам split CSV (`data/crystal/splits/region_holdout_v1.csv`)
+лежит в git и приходит через `git clone` / `git pull` — отдельно его
+паковать НЕ нужно (иначе untracked-файл заблокирует pull в Colab).
+
+Залить zip в Drive: `MyDrive/diploma_data/crystal_data_v1.zip`.
 
 `patches.npy` (~2.9 ГБ) уже в Drive по пути
 `MyDrive/colab_crystal/patches.npy` (с прошлых crystal-runs).
