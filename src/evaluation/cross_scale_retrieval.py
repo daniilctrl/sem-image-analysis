@@ -36,12 +36,27 @@ def build_faiss_index(embeddings):
     return index, normalized
 
 
-def run_retrieval_test(embeddings, df, K=10):
+def run_retrieval_test(embeddings, df, K=10, group_by="source"):
     """Cross-Scale Retrieval тест на всей выборке.
 
     Векторизованная реализация: для скорости все `.loc`/`.iloc` обращения
     в inner loop заменены на numpy-массивы заранее. На 22k тайлов это даёт
     ускорение ~10-50x по сравнению с предыдущей pandas-версией.
+
+    Args:
+        embeddings: (N, D) array.
+        df: metadata, must contain `source_image`, `mag`.
+        K: top-K соседей.
+        group_by: какое поле использовать для исключения тривиально
+            близких соседей. "source" — исключать соседей из той же
+            картинки (текущая защита, исключает соседние тайлы той же
+            съёмки). "img_id" — алиас "source" для совместимости.
+            "material" — исключать всю материал-группу запроса (стресс-
+            тест: «найди cross-instance соседа из других материалов»);
+            при таком режиме precision@K_material всегда 0, метрика
+            теряет смысл, оставлено для отладки. Spatial split на
+            уровне img_id выполняется через "source", потому что
+            `source_image` уже включает идентификатор снимка.
     """
     index, normed = build_faiss_index(embeddings)
 
@@ -55,6 +70,13 @@ def run_retrieval_test(embeddings, df, K=10):
     mags = df['mag'].to_numpy()
     mag_is_nan = pd.isna(mags)
 
+    if group_by in ("source", "img_id"):
+        groups = sources
+    elif group_by == "material":
+        groups = materials
+    else:
+        raise ValueError(f"Unknown group_by={group_by!r}")
+
     # Только материалы с > 1 увеличением (иначе cross-scale бессмыслен)
     valid_mask = ~mag_is_nan
     mat_mag_counts = df.loc[valid_mask].groupby('material')['mag'].nunique()
@@ -63,30 +85,36 @@ def run_retrieval_test(embeddings, df, K=10):
     test_indices = np.flatnonzero(test_mask)
 
     print(f"Cross-scale test: {len(test_indices)} tiles across "
-          f"{len(valid_materials)} materials")
+          f"{len(valid_materials)} materials (group_by={group_by})")
     print(f"Materials: {sorted(valid_materials)}")
 
-    # Batch FAISS search (один вызов вместо цикла)
+    # fetch_K выбираем как (макс. размер группы) + K + запас. Гарантия:
+    # даже если все same-group соседи окажутся первыми в выдаче, после
+    # фильтра останется ≥ K cross-group кандидатов. Без этого модели с
+    # сильной локальной геометрической инвариантностью (ImageNet
+    # ResNet50) теряют до половины запросов из теста, и сравнение
+    # baseline'ов становится несопоставимым.
+    max_group_size = int(pd.Series(groups).value_counts().iloc[0])
+    fetch_K = min(max_group_size + K + 32, len(normed))
+    print(f"FAISS fetch_K={fetch_K} (max group size={max_group_size}, K={K})")
     query_embs = normed[test_indices]
-    # Берём K*5, чтобы отфильтровать self и same-source кандидатов
-    fetch_K = K * 5
     sims_all, ids_all = index.search(query_embs, fetch_K)
 
     results = []
     for i, q_idx in enumerate(tqdm(test_indices, desc=f"Retrieval (K={K})")):
         q_material = materials[q_idx]
         q_mag = mags[q_idx]
-        q_source = sources[q_idx]
+        q_group = groups[q_idx]
 
         ret_ids = ids_all[i]
 
-        # numpy-векторизованная фильтрация self и same-source
-        ret_sources = sources[ret_ids]
+        # numpy-векторизованная фильтрация self и соседей из той же группы
+        ret_groups = groups[ret_ids]
         ret_materials = materials[ret_ids]
         ret_mags = mags[ret_ids]
         ret_mag_valid = ~pd.isna(ret_mags)
 
-        keep = (ret_ids != q_idx) & (ret_sources != q_source)
+        keep = (ret_ids != q_idx) & (ret_groups != q_group)
         kept_ids = ret_ids[keep][:K]
         if len(kept_ids) < K:
             continue
@@ -204,9 +232,12 @@ def main(args):
     assert len(df) == len(embeddings), f"Mismatch: {len(df)} names vs {len(embeddings)} embeddings"
     print(f"Loaded {len(embeddings)} embeddings ({embeddings.shape[1]}D)")
     
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     # 2. Запуск теста
-    results = run_retrieval_test(embeddings, df, K=args.K)
-    
+    results = run_retrieval_test(embeddings, df, K=args.K, group_by=args.group_by)
+
     # 3. Вывод результатов
     avg_pm, avg_pcs = print_summary(
         results, args.K, args.model_name,
@@ -263,11 +294,8 @@ def main(args):
         )
         ci_df.to_csv(ci_path, index=False)
         print(f"Bootstrap CI saved: {ci_path}")
-    
+
     # 4. Сохранение
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
     results.to_csv(output_dir / f"cross_scale_results_{args.model_name.lower().replace(' ', '_')}.csv", index=False)
     plot_results(results, args.K, output_dir / f"cross_scale_plot_{args.model_name.lower().replace(' ', '_')}.png", args.model_name)
     
@@ -291,6 +319,12 @@ if __name__ == "__main__":
     parser.add_argument("--n_bootstrap", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42,
                         help="Seed for bootstrap RNG (reproducible CI)")
+    parser.add_argument("--group_by", type=str, default="source",
+                        choices=["source", "img_id", "material"],
+                        help="Field used to exclude trivially-close neighbors. "
+                             "'source'/'img_id' — exclude same SEM image (default; "
+                             "spatial split at img_id level). 'material' — debug mode "
+                             "where same-material neighbors are excluded entirely.")
 
     args = parser.parse_args()
     main(args)
