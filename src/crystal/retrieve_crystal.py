@@ -298,54 +298,58 @@ def plot_retrieval_results(results_df: pd.DataFrame, K: int, output_path: Path):
     legend_fs = 13
     suptitle_fs = 18
 
-    fig, axes = plt.subplots(1, 3, figsize=(22, 7))
+    # Layout 2+1: два графика в верхнем ряду, один по центру снизу
+    fig = plt.figure(figsize=(20, 14))
+    gs = fig.add_gridspec(2, 2, hspace=0.38, wspace=0.30)
+    ax0 = fig.add_subplot(gs[0, 0])
+    ax1 = fig.add_subplot(gs[0, 1])
+    ax2 = fig.add_subplot(gs[1, :])
 
     # 1. Per-cluster Precision
     per_cl = results_df.groupby("cluster")[[pc, pm]].mean().sort_index()
     x = per_cl.index
     width = 0.35
-    axes[0].bar(x - width / 2, per_cl[pc], width,
-                label="Согласованность кластера (диаг.)", color="#2196F3", alpha=0.8)
-    axes[0].bar(x + width / 2, per_cl[pm], width,
-                label=f"Precision@{K} (Миллер)", color="#FF9800", alpha=0.8)
-    axes[0].set_xlabel("Номер кластера", fontsize=label_fs)
-    axes[0].set_ylabel(f"Значение метрики @ K={K}", fontsize=label_fs)
-    axes[0].set_title(f"Согласованность и Precision@{K} по кластерам", fontsize=title_fs)
-    axes[0].legend(fontsize=legend_fs)
-    axes[0].set_ylim(0, 1)
-    axes[0].tick_params(axis="both", labelsize=tick_fs)
-    axes[0].grid(True, alpha=0.3)
+    ax0.bar(x - width / 2, per_cl[pc], width,
+            label="Согласованность кластера (диаг.)", color="#2196F3", alpha=0.8)
+    ax0.bar(x + width / 2, per_cl[pm], width,
+            label=f"Precision@{K} (Миллер)", color="#FF9800", alpha=0.8)
+    ax0.set_xlabel("Номер кластера", fontsize=label_fs)
+    ax0.set_ylabel(f"Значение метрики @ K={K}", fontsize=label_fs)
+    ax0.set_title(f"Согласованность и Precision@{K} по кластерам", fontsize=title_fs)
+    ax0.legend(fontsize=legend_fs)
+    ax0.set_ylim(0, 1)
+    ax0.tick_params(axis="both", labelsize=tick_fs)
+    ax0.grid(True, alpha=0.3)
 
     # 2. Per-Miller-family Precision
     per_fam = results_df.groupby("miller_family")[[pc, pm]].mean()
     per_fam = per_fam.reindex([f for f in FAMILY_NAMES if f in per_fam.index])
     y = range(len(per_fam))
-    axes[1].barh(y, per_fam[pm], color="#4CAF50", alpha=0.8)
-    axes[1].set_yticks(y)
-    axes[1].set_yticklabels(per_fam.index, fontsize=tick_fs)
-    axes[1].set_xlabel(f"Precision@{K} (то же семейство Миллера)", fontsize=label_fs)
-    axes[1].set_title(f"Precision@{K} по семействам Миллера", fontsize=title_fs)
-    axes[1].set_xlim(0, 1)
-    axes[1].tick_params(axis="x", labelsize=tick_fs)
-    axes[1].grid(True, alpha=0.3)
+    ax1.barh(y, per_fam[pm], color="#4CAF50", alpha=0.8)
+    ax1.set_yticks(y)
+    ax1.set_yticklabels(per_fam.index, fontsize=tick_fs)
+    ax1.set_xlabel(f"Precision@{K} (то же семейство Миллера)", fontsize=label_fs)
+    ax1.set_title(f"Precision@{K} по семействам Миллера", fontsize=title_fs)
+    ax1.set_xlim(0, 1)
+    ax1.tick_params(axis="x", labelsize=tick_fs)
+    ax1.grid(True, alpha=0.3)
 
-    # 3. Similarity distribution
-    axes[2].hist(results_df[ms], bins=50, color="#9C27B0", alpha=0.7, edgecolor="white")
-    axes[2].set_xlabel(f"Среднее косинусное сходство @ K={K}", fontsize=label_fs)
-    axes[2].set_ylabel("Количество", fontsize=label_fs)
-    axes[2].set_title(f"Распределение средней похожести (K={K})", fontsize=title_fs)
-    axes[2].axvline(results_df[ms].mean(), color="red", linestyle="--",
-                    label=f"среднее={results_df[ms].mean():.3f}")
-    axes[2].legend(fontsize=legend_fs)
-    axes[2].tick_params(axis="both", labelsize=tick_fs)
-    axes[2].grid(True, alpha=0.3)
+    # 3. Similarity distribution (нижний ряд — на всю ширину)
+    ax2.hist(results_df[ms], bins=50, color="#9C27B0", alpha=0.7, edgecolor="white")
+    ax2.set_xlabel(f"Среднее косинусное сходство @ K={K}", fontsize=label_fs)
+    ax2.set_ylabel("Количество", fontsize=label_fs)
+    ax2.set_title(f"Распределение средней похожести (K={K})", fontsize=title_fs)
+    ax2.axvline(results_df[ms].mean(), color="red", linestyle="--",
+                label=f"среднее={results_df[ms].mean():.3f}")
+    ax2.legend(fontsize=legend_fs)
+    ax2.tick_params(axis="both", labelsize=tick_fs)
+    ax2.grid(True, alpha=0.3)
 
     plt.suptitle(
         f"Обратный поиск по поверхностным мотивам кристалла "
         f"(K={K}, N={len(results_df)})",
         fontsize=suptitle_fs, fontweight="bold",
     )
-    plt.tight_layout()
     plt.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close()
     print(f"Plot saved: {output_path}")

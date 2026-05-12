@@ -49,13 +49,15 @@ def main(args):
     
     crosstab.to_csv(output_dir / "miller_classification_crosstab.csv")
     
-    # Размер figsize и шрифтов масштабируем под число кластеров,
-    # чтобы тепловая карта при k=35 не «слипалась». Высота линейно
-    # растёт от 8 (для k≤10) до 16 (для k≥30).
+    # Размер figsize масштабируем по числу строк (кластеров) И столбцов
+    # (семейств Миллера), чтобы аннотации в ячейках не выходили за границы.
     n_rows = int(df[cluster_col].nunique())
-    fig_h = max(8.0, min(16.0, 0.42 * n_rows + 6.0))
-    fig_w = 14.0
-    annot_fs = 10 if n_rows <= 25 else 9
+    crosstab_tmp = pd.crosstab(df[cluster_col], df['miller_family'])
+    n_cols = crosstab_tmp.shape[1]
+    cell_w, cell_h = 0.55, 0.40  # дюймов на ячейку
+    fig_w = max(14.0, n_cols * cell_w + 2.5)
+    fig_h = max(8.0, n_rows * cell_h + 2.5)
+    annot_fs = 9 if n_rows <= 25 else 8
     label_fs = 14
     tick_fs = 12
     title_fs = 15

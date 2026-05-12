@@ -83,7 +83,14 @@ def main(args):
     n_examples = 6
     clusters = stats.index.tolist()
 
-    fig, axes = plt.subplots(len(clusters), n_examples, figsize=(n_examples*2.2, len(clusters)*2.2))
+    # Ограничиваем число показываемых кластеров, равномерно выбирая из всего списка
+    max_show = int(args.max_clusters_show) if args.max_clusters_show != float('inf') else len(clusters)
+    if max_show < len(clusters):
+        step = len(clusters) / max_show
+        clusters = [clusters[int(i * step)] for i in range(max_show)]
+
+    row_height = 1.5  # дюймов на строку (меньше, чем 2.2, чтобы влезало на страницу)
+    fig, axes = plt.subplots(len(clusters), n_examples, figsize=(n_examples * 2.2, len(clusters) * row_height))
     if len(clusters) == 1:
         axes = [axes]
 
@@ -125,6 +132,9 @@ if __name__ == "__main__":
     parser.add_argument("--patch_dir", type=str, default=str(_root / "data" / "crystal" / "patches"))
     parser.add_argument("--output_dir", type=str, default=str(_root / "data" / "crystal" / "analysis"))
     parser.add_argument("--n_clusters", type=int, default=8, help="Номер кластеризации (какую колонку брать из CSV)")
+    parser.add_argument("--max_clusters_show", type=int, default=None, help="Максимальное число кластеров в визуализации патчей (None = все)")
 
     args = parser.parse_args()
+    if args.max_clusters_show is None:
+        args.max_clusters_show = float('inf')
     main(args)
