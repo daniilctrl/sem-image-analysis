@@ -26,21 +26,24 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 REPO = "daniilctrl/sem-image-analysis"
 DEFAULT_TAG = "vkr-submission"
 
 # (asset_name_in_release, extract_into_repo_path)
+# Tiles are kept as .zip because they are already PNG-compressed and
+# gzip-packing them would just waste time without saving space.
 ARTIFACTS: dict[int, list[tuple[str, str]]] = {
     1: [
         ("tier1_sem_embeddings.tar.gz", "data/embeddings"),
         ("tier1_crystal_embeddings.tar.gz", "data/crystal/embeddings"),
     ],
     2: [
-        ("tier2_sem_checkpoints.tar.gz", "models/checkpoints"),
+        ("tier2_sem_checkpoints.tar.gz", "models/april"),
         ("tier2_crystal_checkpoint.tar.gz", "models/crystal"),
-        ("tier2_sem_tiles.tar.gz", "data/processed"),
+        ("tier2_sem_tiles.zip", "data"),  # zip contains processed/ at top
     ],
     3: [
         ("tier3_crystal_atoms.tar.gz", "data/crystal"),
@@ -74,9 +77,15 @@ def _download(tag: str, asset: str, dest_dir: Path) -> Path:
 
 def _extract(archive: Path, target: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
-    print(f"  [tar]  {archive.name} -> {target.relative_to(Path.cwd())}")
-    with tarfile.open(archive, "r:gz") as tf:
-        tf.extractall(target)
+    rel = target.relative_to(Path.cwd()) if target.is_absolute() else target
+    if archive.suffix == ".zip":
+        print(f"  [zip]  {archive.name} -> {rel}")
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(target)
+    else:
+        print(f"  [tar]  {archive.name} -> {rel}")
+        with tarfile.open(archive, "r:gz") as tf:
+            tf.extractall(target)
 
 
 def main() -> None:
