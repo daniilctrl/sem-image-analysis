@@ -71,3 +71,4 @@ data/embeddings_legacy_*/
 
 # Claude Code workspace
 .claude/
+.cache/
