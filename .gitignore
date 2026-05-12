@@ -64,3 +64,10 @@ notebooks/*.html
 # Binary data arrays
 data/**/*.npy
 data/**/*.parquet
+
+# Local backups of legacy artifacts
+data/embeddings.march_backup/
+data/embeddings_legacy_*/
+
+# Claude Code workspace
+.claude/
